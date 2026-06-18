@@ -22,9 +22,12 @@ eframe = { version = "0.29", default-features = false, features = [
     "glow",          # OpenGL renderer (swap for "wgpu" if preferred)
 ] }
 
+
+
 # ── System tray icon + context menu ──────────────────────────────────────────
 # common-controls-v6 embeds the Windows manifest for native visual styles.
 tray-icon = { version = "0.19", features = ["common-controls-v6"] }
+raw-window-handle = "0.6"
 
 # ── Windows API — official Microsoft crate (NOT winapi!) ─────────────────────
 [dependencies.windows]

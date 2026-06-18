@@ -2183,6 +2183,7 @@ name = "rswitcher"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "tray-icon",

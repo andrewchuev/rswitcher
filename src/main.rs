@@ -10,7 +10,7 @@ mod settings;
 mod switcher;
 
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use eframe::egui;
@@ -18,9 +18,12 @@ use tray_icon::{
     menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
     TrayIconBuilder, TrayIconEvent,
 };
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::{
-    Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM},
+    Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
     System::LibraryLoader::GetModuleHandleW,
+
+
     UI::{
         Input::KeyboardAndMouse::{
             GetAsyncKeyState, GetKeyboardLayout, GetKeyState, VIRTUAL_KEY, VK_BACK, VK_CAPITAL, VK_LWIN,
@@ -28,12 +31,13 @@ use windows::Win32::{
         },
         WindowsAndMessaging::{
             CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW,
-            GetWindowThreadProcessId, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
-            KBDLLHOOKSTRUCT, KBDLLHOOKSTRUCT_FLAGS, LLKHF_INJECTED, MSG, WH_KEYBOARD_LL,
-            WM_KEYDOWN, WM_SYSKEYDOWN,
+            GetWindowThreadProcessId, SetForegroundWindow, SetWindowsHookExW, ShowWindow,
+            TranslateMessage, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, KBDLLHOOKSTRUCT_FLAGS,
+            LLKHF_INJECTED, MSG, SW_HIDE, SW_SHOW, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
         },
     },
 };
+
 
 pub use settings::Settings;
 
@@ -43,6 +47,10 @@ pub use settings::Settings;
 
 // Set to true when the user requests to show the window via the tray menu/double-click.
 static WAS_SHOW_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+// HWND of the main window, stored as usize so it can live in a static.
+// Written once during window creation; read from the tray watcher thread.
+static MAIN_HWND: AtomicUsize = AtomicUsize::new(0);
 
 // ── Tray icon handle shared with the watcher thread ───────────────────────────
 //
@@ -71,17 +79,13 @@ fn spawn_tray_watcher(ctx: egui::Context, show_id: MenuId, quit_id: MenuId) {
                         log_info!("=== RSwitcher quit via tray menu ===");
                         std::process::exit(0);
                     } else if ev.id == show_id {
-                        WAS_SHOW_REQUESTED.store(true, Ordering::Relaxed);
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                        show_main_window(&ctx);
                     }
                 }
                 // ── Tray icon events (double-click → show settings) ───────────
                 while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
                     if matches!(ev, TrayIconEvent::DoubleClick { .. }) {
-                        WAS_SHOW_REQUESTED.store(true, Ordering::Relaxed);
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                        show_main_window(&ctx);
                     }
                 }
                 // ── Language icon update ──────────────────────────────────────
@@ -109,6 +113,37 @@ fn spawn_tray_watcher(ctx: egui::Context, show_id: MenuId, quit_id: MenuId) {
             }
         })
         .expect("failed to spawn tray watcher thread");
+}
+
+/// Show and focus the main settings window.
+///
+/// ViewportCommand::Visible sent from outside eframe's update() is processed
+/// between frames and may be discarded by egui's begin_frame() reset.  Instead
+/// we use Win32 ShowWindow directly (guaranteed to work) and then signal
+/// WAS_SHOW_REQUESTED so the next update() call renders the UI and sends its
+/// own ViewportCommand::Focus from the correct frame context.
+fn hide_main_window() {
+    let hwnd_raw = MAIN_HWND.load(Ordering::Relaxed);
+    if hwnd_raw != 0 {
+        unsafe {
+            let hwnd = HWND(hwnd_raw as *mut std::ffi::c_void);
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+    }
+}
+
+fn show_main_window(ctx: &egui::Context) {
+    WAS_SHOW_REQUESTED.store(true, Ordering::Relaxed);
+    let hwnd_raw = MAIN_HWND.load(Ordering::Relaxed);
+    if hwnd_raw != 0 {
+        unsafe {
+            let hwnd = HWND(hwnd_raw as *mut std::ffi::c_void);
+            let _ = ShowWindow(hwnd, SW_SHOW);
+            let _ = SetForegroundWindow(hwnd);
+        }
+    }
+    // Wake up eframe's event loop so update() runs and renders the UI promptly.
+    ctx.request_repaint();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -502,7 +537,7 @@ fn start_hook_thread() -> std::thread::JoinHandle<()> {
                 SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), HINSTANCE(hmod.0), 0)
                     .expect("SetWindowsHookExW failed")
             };
-            eprintln!("[hook] installed");
+            log_info!("[hook] installed");
 
             let mut msg = MSG::default();
             loop {
@@ -517,10 +552,11 @@ fn start_hook_thread() -> std::thread::JoinHandle<()> {
             }
 
             unsafe { UnhookWindowsHookEx(hook).ok() };
-            eprintln!("[hook] uninstalled");
+            log_info!("[hook] uninstalled");
         })
         .expect("failed to spawn hook thread")
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // eframe application
@@ -531,6 +567,10 @@ struct RswitcherApp {
     new_exception: String,
     autostart_cached: bool,
     first_frame: bool,
+    // Tracks whether the window is currently visible so we can detect the
+    // hidden→visible transition and send ViewportCommand::Focus from within
+    // update() (the only place where viewport commands are processed reliably).
+    window_visible: bool,
 }
 
 impl RswitcherApp {
@@ -540,6 +580,7 @@ impl RswitcherApp {
             new_exception: String::new(),
             autostart_cached: autostart::is_enabled(),
             first_frame: true,
+            window_visible: false,
         }
     }
 }
@@ -557,7 +598,29 @@ impl eframe::App for RswitcherApp {
         // ── Close / hide logic (window X button → hide, not quit) ───────────
         if ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            WAS_SHOW_REQUESTED.store(false, Ordering::Relaxed);
+            self.window_visible = false;
+            // ViewportCommand::Visible(false) has the same inter-frame discard
+            // problem as Visible(true) — use Win32 directly for a reliable hide.
+            hide_main_window();
+        }
+
+        let should_be_visible = WAS_SHOW_REQUESTED.load(Ordering::Relaxed);
+
+        // ── Hidden → visible transition ──────────────────────────────────────
+        // show_main_window() uses Win32 ShowWindow directly (reliable for hidden
+        // windows) and sets WAS_SHOW_REQUESTED.  Here we keep eframe's internal
+        // state in sync by sending ViewportCommand::Focus from within update(),
+        // which is the only frame context where viewport commands are processed.
+        if should_be_visible && !self.window_visible {
+            self.window_visible = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+
+        // ── Wakeup & Repaint for background processing (hidden state) ─────────
+        if !should_be_visible {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            return;
         }
 
         // ── UI ───────────────────────────────────────────────────────────────
@@ -778,10 +841,26 @@ fn main() -> eframe::Result<()> {
         "RSwitcher",
         native_options,
         Box::new(move |cc| {
+            // Store HWND for use by the tray watcher, then hide immediately to
+            // prevent startup flicker (with_visible(false) alone can still show
+            // a brief flash before the first frame hides the window).
+            if let Ok(handle) = cc.window_handle() {
+                if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
+                    let hwnd_raw = win32_handle.hwnd.get();
+                    MAIN_HWND.store(hwnd_raw as usize, Ordering::Relaxed);
+                    let hwnd = HWND(hwnd_raw as *mut std::ffi::c_void);
+                    unsafe {
+                        let _ = ShowWindow(hwnd, SW_HIDE);
+                    }
+                }
+            }
+
             spawn_tray_watcher(cc.egui_ctx.clone(), show_id, quit_id);
+
             Ok(Box::new(RswitcherApp::new(settings)))
         }),
     )
+
 }
 
 fn build_tray() -> (MenuId, MenuId) {

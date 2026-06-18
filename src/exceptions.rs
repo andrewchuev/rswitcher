@@ -2,13 +2,70 @@ use std::cell::RefCell;
 
 use windows::core::PWSTR;
 use windows::Win32::{
-    Foundation::{CloseHandle, BOOL, HWND},
+    Foundation::{CloseHandle, BOOL, HWND, LPARAM},
     System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
         PROCESS_QUERY_LIMITED_INFORMATION,
     },
-    UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
+    UI::WindowsAndMessaging::{
+        EnumWindows, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+        IsWindowVisible,
+    },
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Running-process enumeration (for the exceptions picker)
+// ─────────────────────────────────────────────────────────────────────────────
+
+pub struct RunningApp {
+    pub exe:   String,
+    pub title: String,
+}
+
+/// Enumerate visible top-level windows and return a de-duplicated, sorted list
+/// of (exe_name, window_title) pairs.  Our own process is excluded.
+pub fn enumerate_visible_apps() -> Vec<RunningApp> {
+    let self_exe = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()))
+        .unwrap_or_default();
+
+    let mut raw: Vec<RunningApp> = Vec::new();
+    let ptr = &mut raw as *mut Vec<RunningApp> as isize;
+    unsafe { let _ = EnumWindows(Some(enum_callback), LPARAM(ptr)); }
+
+    // De-duplicate by exe name; keep first seen title.
+    let mut seen = std::collections::HashMap::<String, String>::new();
+    for app in raw {
+        if app.exe != self_exe {
+            seen.entry(app.exe).or_insert(app.title);
+        }
+    }
+
+    let mut result: Vec<RunningApp> = seen
+        .into_iter()
+        .map(|(exe, title)| RunningApp { exe, title })
+        .collect();
+    result.sort_by(|a, b| a.exe.cmp(&b.exe));
+    result
+}
+
+unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    if !IsWindowVisible(hwnd).as_bool() {
+        return BOOL(1);
+    }
+    let mut buf = [0u16; 256];
+    let len = GetWindowTextW(hwnd, &mut buf);
+    if len <= 0 {
+        return BOOL(1);
+    }
+    if let Some(exe) = exe_name_for_hwnd(hwnd) {
+        let title = String::from_utf16_lossy(&buf[..len as usize]);
+        let list = &mut *(lparam.0 as *mut Vec<RunningApp>);
+        list.push(RunningApp { exe, title });
+    }
+    BOOL(1)
+}
 
 // ── Per-thread cache ─────────────────────────────────────────────────────────
 // Key: foreground HWND as usize.  Invalidated when the active window changes.

@@ -71,7 +71,8 @@ fn spawn_tray_watcher(ctx: egui::Context, show_id: MenuId, quit_id: MenuId) {
     std::thread::Builder::new()
         .name("rswitcher-tray".into())
         .spawn(move || {
-            let mut last_icon: Option<LangIcon> = None;
+            // (lang, dimmed) — dimmed=true when the foreground app is in exceptions
+            let mut last_icon: Option<(LangIcon, bool)> = None;
             loop {
                 // ── Menu events ───────────────────────────────────────────────
                 while let Ok(ev) = MenuEvent::receiver().try_recv() {
@@ -99,15 +100,29 @@ fn spawn_tray_watcher(ctx: egui::Context, show_id: MenuId, quit_id: MenuId) {
                 } else {
                     None
                 };
-                if new_lang.is_some() && new_lang != last_icon {
-                    if let Some(lang) = new_lang {
+
+                // Dim the icon when the foreground app is in the exceptions list.
+                let dimmed = SETTINGS
+                    .get()
+                    .and_then(|s| s.try_read().ok())
+                    .map(|s| {
+                        !s.exceptions.is_empty()
+                            && exceptions::foreground_exe_name()
+                                .map(|name| s.exceptions.iter().any(|e| *e == name))
+                                .unwrap_or(false)
+                    })
+                    .unwrap_or(false);
+
+                let new_state = new_lang.map(|l| (l, dimmed));
+                if new_state.is_some() && new_state != last_icon {
+                    if let Some((lang, dim)) = new_state {
                         if let Some(tray) = TRAY_ICON.get() {
                             if let Ok(t) = tray.lock() {
-                                let _ = t.0.set_icon(Some(make_lang_icon(lang)));
+                                let _ = t.0.set_icon(Some(make_lang_icon(lang, dim)));
                             }
                         }
                     }
-                    last_icon = new_lang;
+                    last_icon = new_state;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
@@ -160,13 +175,22 @@ pub fn make_app_icon_rgba(size: usize) -> Vec<u8> {
     include_bytes!("../assets/app_32.raw").to_vec()
 }
 
-fn make_lang_icon(lang: LangIcon) -> tray_icon::Icon {
+fn make_lang_icon(lang: LangIcon, dimmed: bool) -> tray_icon::Icon {
     const SIZE: u32 = 32;
     let bytes: &[u8] = match lang {
         LangIcon::Ru => include_bytes!("../assets/ru.raw"),
         LangIcon::En => include_bytes!("../assets/en.raw"),
     };
-    tray_icon::Icon::from_rgba(bytes.to_vec(), SIZE, SIZE).unwrap()
+    let mut rgba = bytes.to_vec();
+    if dimmed {
+        for px in rgba.chunks_mut(4) {
+            px[0] = (px[0] as u32 * 35 / 100) as u8;
+            px[1] = (px[1] as u32 * 35 / 100) as u8;
+            px[2] = (px[2] as u32 * 35 / 100) as u8;
+            // px[3] = alpha, leave unchanged
+        }
+    }
+    tray_icon::Icon::from_rgba(rgba, SIZE, SIZE).unwrap()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -567,10 +591,10 @@ struct RswitcherApp {
     new_exception: String,
     autostart_cached: bool,
     first_frame: bool,
-    // Tracks whether the window is currently visible so we can detect the
-    // hidden→visible transition and send ViewportCommand::Focus from within
-    // update() (the only place where viewport commands are processed reliably).
     window_visible: bool,
+    // ── Running-apps picker ───────────────────────────────────────────────────
+    show_picker: bool,
+    running_apps: Vec<exceptions::RunningApp>,
 }
 
 impl RswitcherApp {
@@ -581,6 +605,8 @@ impl RswitcherApp {
             autostart_cached: autostart::is_enabled(),
             first_frame: true,
             window_visible: false,
+            show_picker: false,
+            running_apps: Vec::new(),
         }
     }
 }
@@ -641,7 +667,7 @@ impl eframe::App for RswitcherApp {
             ui.add_space(8.0);
 
             // ── Exclusions ───────────────────────────────────────────────────
-            ui.label("Исключения (имя .exe, без пути):");
+            ui.label("Исключения:");
             ui.add_space(2.0);
 
             let mut to_remove: Option<usize> = None;
@@ -691,6 +717,10 @@ impl eframe::App for RswitcherApp {
                         self.new_exception.clear();
                         resp.request_focus();
                     }
+                }
+                if ui.button("Выбрать из запущенных…").clicked() {
+                    self.running_apps = exceptions::enumerate_visible_apps();
+                    self.show_picker = true;
                 }
             });
 
@@ -761,6 +791,103 @@ impl eframe::App for RswitcherApp {
                 });
             });
         });
+
+        // ── Running-apps picker popup ─────────────────────────────────────────
+        // Rendered outside CentralPanel so it floats on top of the main UI.
+        if self.show_picker {
+            let current_exceptions: Vec<String> =
+                self.settings.read().unwrap().exceptions.clone();
+            let mut to_add:     Option<String> = None;
+            let mut do_refresh: bool           = false;
+            let mut close:      bool           = false;
+
+            egui::Window::new("Запущенные программы")
+                .collapsible(false)
+                .resizable(false)
+                .default_width(460.0)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{} программ", self.running_apps.len()));
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                if ui.button("↻ Обновить").clicked() {
+                                    do_refresh = true;
+                                }
+                            },
+                        );
+                    });
+                    ui.separator();
+
+                    egui::ScrollArea::vertical()
+                        .id_salt("picker")
+                        .max_height(300.0)
+                        .show(ui, |ui| {
+                            if self.running_apps.is_empty() {
+                                ui.weak("Нет запущенных приложений.");
+                            }
+                            for app in &self.running_apps {
+                                let already = current_exceptions.contains(&app.exe);
+                                ui.horizontal(|ui| {
+                                    // Right side first (right_to_left layout) so the
+                                    // button doesn't squeeze the labels on small windows.
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if already {
+                                                ui.weak("✓");
+                                            } else if ui.small_button("+").clicked() {
+                                                to_add = Some(app.exe.clone());
+                                            }
+                                            // Truncate long titles so exe name is readable.
+                                            let title: &str = &app.title;
+                                            let short = if title.len() > 38 {
+                                                &title[..38]
+                                            } else {
+                                                title
+                                            };
+                                            ui.label(
+                                                egui::RichText::new(short)
+                                                    .weak()
+                                                    .size(11.0),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(&app.exe).monospace(),
+                                            );
+                                        },
+                                    );
+                                });
+                            }
+                        });
+
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.weak("Кликните + чтобы добавить в исключения.");
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                if ui.button("Закрыть").clicked() {
+                                    close = true;
+                                }
+                            },
+                        );
+                    });
+                });
+
+            if do_refresh {
+                self.running_apps = exceptions::enumerate_visible_apps();
+            }
+            if let Some(exe) = to_add {
+                let mut s = self.settings.write().unwrap();
+                if !s.exceptions.contains(&exe) {
+                    s.exceptions.push(exe);
+                    settings::save(&s);
+                }
+            }
+            if close {
+                self.show_picker = false;
+            }
+        }
     }
 }
 
@@ -882,7 +1009,7 @@ fn build_tray() -> (MenuId, MenuId) {
     let tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_tooltip("RSwitcher")
-        .with_icon(make_lang_icon(initial_lang))
+        .with_icon(make_lang_icon(initial_lang, false))
         .build()
         .expect("failed to create tray icon");
 

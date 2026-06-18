@@ -1,0 +1,132 @@
+use std::mem;
+
+use windows::Win32::{
+    Foundation::{LPARAM, WPARAM},
+    UI::{
+        Input::KeyboardAndMouse::{
+            GetKeyboardLayoutList, SendInput, HKL,
+            INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
+            KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
+            VIRTUAL_KEY, VK_BACK,
+        },
+        WindowsAndMessaging::{
+            GetForegroundWindow, PostMessageW, WM_INPUTLANGCHANGEREQUEST,
+        },
+    },
+};
+
+use crate::buffer::SwitchAction;
+use crate::layout::{LANG_EN_US, LANG_RU};
+
+/// Execute the complete switch sequence in one atomic `SendInput` call:
+///
+///  1. N × Backspace         — erase the mistyped word
+///  2. Correct word          — injected via `KEYEVENTF_UNICODE` (layout-agnostic)
+///  3. Optional boundary key — the Space / Enter that triggered detection
+///
+/// After injecting the text we send `WM_INPUTLANGCHANGEREQUEST` to the active
+/// window so its language-bar indicator flips to match.  Apps that ignore this
+/// message still receive the correct text because Unicode injection does not
+/// depend on the active layout.
+///
+/// # Safety
+/// Must be called only from the hook thread.  The injected events carry
+/// `LLKHF_INJECTED` in their hook-proc flags, so our hook_proc will skip them
+/// (preventing infinite recursion).
+pub fn perform_switch(action: &SwitchAction, boundary_vk: Option<VIRTUAL_KEY>) {
+    let mut inputs: Vec<INPUT> = Vec::with_capacity(
+        action.backspaces * 2 + action.new_word.len() * 2 + 2,
+    );
+
+    // ── 1. Erase ─────────────────────────────────────────────────────────────
+    for _ in 0..action.backspaces {
+        inputs.push(make_vk(VK_BACK, KEYBD_EVENT_FLAGS(0)));
+        inputs.push(make_vk(VK_BACK, KEYEVENTF_KEYUP));
+    }
+
+    // ── 2. Re-type ───────────────────────────────────────────────────────────
+    for ch in action.new_word.chars() {
+        inputs.push(make_unicode(ch, KEYBD_EVENT_FLAGS(0)));
+        inputs.push(make_unicode(ch, KEYEVENTF_KEYUP));
+    }
+
+    // ── 3. Re-inject the word-boundary key ───────────────────────────────────
+    if let Some(vk) = boundary_vk {
+        inputs.push(make_vk(vk, KEYBD_EVENT_FLAGS(0)));
+        inputs.push(make_vk(vk, KEYEVENTF_KEYUP));
+    }
+
+    unsafe {
+        // Deliver all events in a single call; Windows preserves ordering.
+        SendInput(&inputs, mem::size_of::<INPUT>() as i32);
+
+        // Ask the foreground window to update its layout indicator.
+        let hwnd = GetForegroundWindow();
+        if !hwnd.0.is_null() {
+            let lang = if action.to_ru { LANG_RU } else { LANG_EN_US };
+            if let Some(hkl) = find_hkl(lang) {
+                // HKL is *mut c_void; cast to isize to fit LPARAM.
+                PostMessageW(
+                    hwnd,
+                    WM_INPUTLANGCHANGEREQUEST,
+                    WPARAM(0),
+                    LPARAM(hkl.0 as isize),
+                )
+                .ok();
+            }
+        }
+    }
+}
+
+/// Find an installed HKL whose LANGID (low WORD of the pointer value) matches `lang_id`.
+///
+/// In `windows 0.58`, `GetKeyboardLayoutList` takes a single `Option<&mut [HKL]>`:
+/// - `None`       → returns the number of installed layouts (no fill).
+/// - `Some(slice)` → fills the slice, returns the number filled.
+fn find_hkl(lang_id: u16) -> Option<HKL> {
+    unsafe {
+        let count = GetKeyboardLayoutList(None) as usize;
+        if count == 0 {
+            return None;
+        }
+        // HKL(0) is a null *mut c_void placeholder.
+        let mut list = vec![HKL(std::ptr::null_mut()); count];
+        GetKeyboardLayoutList(Some(list.as_mut_slice()));
+        // The Windows LANGID is the low WORD of the HKL pointer value.
+        list.into_iter().find(|h| (h.0 as usize) as u16 == lang_id)
+    }
+}
+
+// ── Input-event constructors ─────────────────────────────────────────────────
+
+fn make_vk(vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> INPUT {
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk:         vk,
+                wScan:       0,
+                dwFlags:     flags,
+                time:        0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
+fn make_unicode(ch: char, flags: KEYBD_EVENT_FLAGS) -> INPUT {
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                // wVk must be 0 when KEYEVENTF_UNICODE is set.
+                wVk:         VIRTUAL_KEY(0),
+                // wScan carries the UTF-16 code unit.
+                wScan:       ch as u16,
+                dwFlags:     KEYEVENTF_UNICODE | flags,
+                time:        0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}

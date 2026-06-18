@@ -1,0 +1,65 @@
+[package]
+name        = "rswitcher"
+version     = "0.1.0"
+edition     = "2021"
+description = "Auto keyboard-layout switcher for Windows (Punto Switcher alternative)"
+publish     = false
+
+[[bin]]
+name = "rswitcher"
+path = "src/main.rs"
+
+[dependencies]
+
+# ── Serialization (config file) ───────────────────────────────────────────────
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ── GUI (Immediate Mode, main thread) ────────────────────────────────────────
+# default-features = false avoids pulling in wayland/x11 on the Windows target.
+eframe = { version = "0.29", default-features = false, features = [
+    "default_fonts", # bundle Hack + NotoEmoji fonts
+    "glow",          # OpenGL renderer (swap for "wgpu" if preferred)
+] }
+
+# ── System tray icon + context menu ──────────────────────────────────────────
+# common-controls-v6 embeds the Windows manifest for native visual styles.
+tray-icon = { version = "0.19", features = ["common-controls-v6"] }
+
+# ── Windows API — official Microsoft crate (NOT winapi!) ─────────────────────
+[dependencies.windows]
+version = "0.58"
+features = [
+    # Core types: BOOL, HWND, HINSTANCE, LPARAM, LRESULT, WPARAM …
+    "Win32_Foundation",
+
+    # SetWindowsHookExW, CallNextHookEx, UnhookWindowsHookEx,
+    # GetMessageW, TranslateMessage, DispatchMessageW,
+    # MSG, KBDLLHOOKSTRUCT, WH_KEYBOARD_LL, WM_KEYDOWN,
+    # PostThreadMessageW, GetForegroundWindow,
+    # WM_INPUTLANGCHANGEREQUEST (Step 2)
+    "Win32_UI_WindowsAndMessaging",
+
+    # VIRTUAL_KEY, INPUT, KEYBDINPUT, SendInput (Step 2)
+    "Win32_UI_Input_KeyboardAndMouse",
+
+    # GetModuleHandleW  (required to pass a non-NULL hmod to SetWindowsHookExW)
+    "Win32_System_LibraryLoader",
+
+    # OpenProcess, QueryFullProcessImageNameW — for exclusion checks
+    "Win32_System_Threading",
+
+    # RegOpenKeyExW, RegSetValueExW — autostart
+    "Win32_System_Registry",
+]
+
+# ── Build script ─────────────────────────────────────────────────────────────
+[build-dependencies]
+winresource = "0.1"   # embeds Windows manifest + resources into the .exe
+
+# ── Release profile: minimal binary for a background service ─────────────────
+[profile.release]
+opt-level     = "z"   # optimise for size
+lto           = true  # cross-crate link-time optimisation
+codegen-units = 1     # single CU for better inlining
+strip         = true  # strip debug symbols

@@ -11,7 +11,7 @@ mod switcher;
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use eframe::egui;
 use tray_icon::{
@@ -44,34 +44,71 @@ pub use settings::Settings;
 // Set to true by the tray watcher thread; cleared + acted on in update().
 static SHOW_WINDOW: AtomicBool = AtomicBool::new(false);
 
-/// Spawn a background thread that owns all tray / menu event polling.
-///
-/// Reacting directly in this thread (rather than in the eframe update loop)
-/// means quit and show are instant regardless of window visibility.
+// ── Tray icon handle shared with the watcher thread ───────────────────────────
+//
+// eframe's update() is not called reliably for hidden windows, so we update
+// the language icon directly from the background watcher thread instead.
+//
+// SAFETY: On Windows, Shell_NotifyIconW (called by TrayIcon::set_icon) is
+// documented as thread-safe and does not require the caller to be on the
+// window's owning thread.
+struct SendableTray(tray_icon::TrayIcon);
+unsafe impl Send for SendableTray {}
+
+static TRAY_ICON: OnceLock<Mutex<SendableTray>> = OnceLock::new();
+
+/// Spawn a background thread that owns all tray / menu event polling AND
+/// updates the language icon directly (bypassing the eframe update loop).
 fn spawn_tray_watcher(ctx: egui::Context, show_id: MenuId, quit_id: MenuId) {
     std::thread::Builder::new()
         .name("rswitcher-tray".into())
-        .spawn(move || loop {
-            // Menu events
-            while let Ok(ev) = MenuEvent::receiver().try_recv() {
-                if ev.id == quit_id {
-                    log!("=== RSwitcher quit via tray menu ===");
-                    std::process::exit(0);
-                } else if ev.id == show_id {
-                    SHOW_WINDOW.store(true, Ordering::Relaxed);
+        .spawn(move || {
+            let mut last_icon: Option<LangIcon> = None;
+            loop {
+                // ── Menu events ───────────────────────────────────────────────
+                let mut need_repaint = false;
+                while let Ok(ev) = MenuEvent::receiver().try_recv() {
+                    if ev.id == quit_id {
+                        log!("=== RSwitcher quit via tray menu ===");
+                        std::process::exit(0);
+                    } else if ev.id == show_id {
+                        SHOW_WINDOW.store(true, Ordering::Relaxed);
+                        need_repaint = true;
+                    }
+                }
+                // ── Tray icon events (double-click → show settings) ───────────
+                while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
+                    if matches!(ev, TrayIconEvent::DoubleClick { .. }) {
+                        SHOW_WINDOW.store(true, Ordering::Relaxed);
+                        need_repaint = true;
+                    }
+                }
+                // ── Language icon update ──────────────────────────────────────
+                // Read the foreground window's layout directly here so the icon
+                // updates regardless of whether eframe's update() is running.
+                let lang_word = unsafe { foreground_lang() };
+                let new_lang = if layout::hkl_is_russian(lang_word) {
+                    Some(LangIcon::Ru)
+                } else if layout::hkl_is_english(lang_word) {
+                    Some(LangIcon::En)
+                } else {
+                    None
+                };
+                if new_lang.is_some() && new_lang != last_icon {
+                    if let Some(lang) = new_lang {
+                        if let Some(tray) = TRAY_ICON.get() {
+                            if let Ok(t) = tray.lock() {
+                                let _ = t.0.set_icon(Some(make_lang_icon(lang)));
+                            }
+                        }
+                    }
+                    last_icon = new_lang;
+                }
+                if need_repaint {
                     ctx.request_repaint();
                 }
+                std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            // Tray icon events (double-click → show settings)
-            while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
-                if matches!(ev, TrayIconEvent::DoubleClick { .. }) {
-                    SHOW_WINDOW.store(true, Ordering::Relaxed);
-                    ctx.request_repaint();
-                }
-            }
-            // Periodic wake-up so the language icon stays current.
-            ctx.request_repaint();
-            std::thread::sleep(std::time::Duration::from_millis(100));
         })
         .expect("failed to spawn tray watcher thread");
 }
@@ -125,6 +162,77 @@ const GLYPH_N: [u8; 7] = [
     0b10010, // █..█.
     0b00000,
 ];
+
+// 's' glyph — used in the app icon ("Rs" = RSwitcher)
+#[rustfmt::skip]
+const GLYPH_S: [u8; 7] = [
+    0b01110, // .███.
+    0b10000, // █....
+    0b01110, // .███.
+    0b00001, // ....█
+    0b01110, // .███.
+    0b00000,
+    0b00000,
+];
+
+/// Generate 32×32 RGBA pixels for the application icon ("Rs" on dark-blue).
+/// Used both as the eframe window icon and (via build.rs) as the .exe resource.
+pub fn make_app_icon_rgba(size: usize) -> Vec<u8> {
+    let scale = (size / 16).max(1);
+    let glyph_w = 5 * scale;
+    let glyph_h = 7 * scale;
+    let gap     = scale;
+    let text_w  = glyph_w * 2 + gap;
+    let off_x   = size.saturating_sub(text_w) / 2;
+    let off_y   = size.saturating_sub(glyph_h) / 2;
+    let radius  = (size as f32 * 0.15).max(1.0);
+
+    let bg: [u8; 3] = [0x1a, 0x2e, 0x6c];
+    let fg: [u8; 3] = [0xd0, 0xd8, 0xe0];
+
+    let half_w = glyph_w;
+    let glyph_pixel = |gx: usize, gy: usize| -> bool {
+        if gy >= glyph_h { return false; }
+        let row = gy / scale;
+        let (glyph, col_pixel) = if gx < half_w {
+            (&GLYPH_R, gx)
+        } else if gx < half_w + gap {
+            return false;
+        } else {
+            (&GLYPH_S, gx - half_w - gap)
+        };
+        if row >= 7 { return false; }
+        let col = col_pixel / scale;
+        if col >= 5 { return false; }
+        (glyph[row] >> (4 - col)) & 1 == 1
+    };
+
+    let mut pixels = vec![0u8; size * size * 4];
+    let s = size as f32;
+    for py in 0..size {
+        for px in 0..size {
+            let idx = (py * size + px) * 4;
+            let fx = px as f32 + 0.5;
+            let fy = py as f32 + 0.5;
+            let qx = (fx - s * 0.5).abs() - (s * 0.5 - radius);
+            let qy = (fy - s * 0.5).abs() - (s * 0.5 - radius);
+            let dist = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius;
+            let alpha = (1.0 - dist.clamp(-1.0, 1.0) * 0.5 - 0.5).clamp(0.0, 1.0);
+            if alpha <= 0.0 { continue; }
+            let is_text = px >= off_x
+                && py >= off_y
+                && px < off_x + text_w
+                && py < off_y + glyph_h
+                && glyph_pixel(px - off_x, py - off_y);
+            let c = if is_text { fg } else { bg };
+            pixels[idx]     = c[0];
+            pixels[idx + 1] = c[1];
+            pixels[idx + 2] = c[2];
+            pixels[idx + 3] = (alpha * 255.0) as u8;
+        }
+    }
+    pixels
+}
 
 fn make_lang_icon(lang: LangIcon) -> tray_icon::Icon {
     const SIZE: usize = 32;
@@ -545,29 +653,14 @@ struct RswitcherApp {
     settings: Arc<RwLock<Settings>>,
     new_exception: String,
     autostart_cached: bool,
-    tray: tray_icon::TrayIcon,
-    icon_lang: Option<LangIcon>, // None forces an update on the first frame
-    watcher_started: bool,
-    show_id: MenuId,
-    quit_id: MenuId,
 }
 
 impl RswitcherApp {
-    fn new(
-        settings: Arc<RwLock<Settings>>,
-        show_id: MenuId,
-        quit_id: MenuId,
-        tray: tray_icon::TrayIcon,
-    ) -> Self {
+    fn new(settings: Arc<RwLock<Settings>>) -> Self {
         Self {
             settings,
             new_exception: String::new(),
             autostart_cached: autostart::is_enabled(),
-            tray,
-            icon_lang: None,
-            watcher_started: false,
-            show_id,
-            quit_id,
         }
     }
 
@@ -579,31 +672,9 @@ impl RswitcherApp {
 
 impl eframe::App for RswitcherApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // ── Start tray watcher thread once (needs ctx, available only here) ──
-        if !self.watcher_started {
-            self.watcher_started = true;
-            spawn_tray_watcher(ctx.clone(), self.show_id.clone(), self.quit_id.clone());
-        }
-
         // ── Show-window request from tray watcher thread ─────────────────────
         if SHOW_WINDOW.swap(false, Ordering::Relaxed) {
             self.show_window(ctx);
-        }
-
-        // ── Tray icon: reflect current foreground language ───────────────────
-        let cur_word = unsafe { foreground_lang() };
-        let new_lang = if layout::hkl_is_russian(cur_word) {
-            Some(LangIcon::Ru)
-        } else if layout::hkl_is_english(cur_word) {
-            Some(LangIcon::En)
-        } else {
-            None
-        };
-        if let Some(lang) = new_lang {
-            if Some(lang) != self.icon_lang {
-                let _ = self.tray.set_icon(Some(make_lang_icon(lang)));
-                self.icon_lang = Some(lang);
-            }
         }
 
         // ── Close / hide logic (window X button → hide, not quit) ───────────
@@ -809,25 +880,33 @@ fn main() -> eframe::Result<()> {
     }
 
     let _hook_thread = start_hook_thread();
-    let (show_id, quit_id, tray) = build_tray();
+    let (show_id, quit_id) = build_tray();
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("RSwitcher — Настройки")
             .with_inner_size([460.0, 400.0])
             .with_visible(false)
-            .with_resizable(false),
+            .with_resizable(false)
+            .with_icon(egui::IconData {
+                rgba:   make_app_icon_rgba(32),
+                width:  32,
+                height: 32,
+            }),
         ..Default::default()
     };
 
     eframe::run_native(
         "RSwitcher",
         native_options,
-        Box::new(move |_cc| Ok(Box::new(RswitcherApp::new(settings, show_id, quit_id, tray)))),
+        Box::new(move |cc| {
+            spawn_tray_watcher(cc.egui_ctx.clone(), show_id, quit_id);
+            Ok(Box::new(RswitcherApp::new(settings)))
+        }),
     )
 }
 
-fn build_tray() -> (MenuId, MenuId, tray_icon::TrayIcon) {
+fn build_tray() -> (MenuId, MenuId) {
     let show_item = MenuItem::new("Настройки", true, None);
     let quit_item = MenuItem::new("Выход", true, None);
     let show_id = show_item.id().clone();
@@ -850,5 +929,9 @@ fn build_tray() -> (MenuId, MenuId, tray_icon::TrayIcon) {
         .build()
         .expect("failed to create tray icon");
 
-    (show_id, quit_id, tray)
+    TRAY_ICON
+        .set(Mutex::new(SendableTray(tray)))
+        .ok();
+
+    (show_id, quit_id)
 }

@@ -5,10 +5,165 @@ fn main() {
         return;
     }
 
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    let ico_path = generate_icon(&out_dir);
+
     winresource::WindowsResource::new()
         .set_manifest(MANIFEST)
+        .set_icon(&ico_path)
         .compile()
         .expect("failed to compile Windows resources");
+}
+
+// ── Application icon generator ────────────────────────────────────────────────
+//
+// Generates an .ico file with 16×16, 32×32, and 48×48 variants.
+// Uses the same design as the runtime tray icon: dark-blue rounded rectangle
+// with "Rs" text in light-gray (R from GLYPH_R, s from GLYPH_S).
+
+fn generate_icon(out_dir: &str) -> String {
+    let ico_path = format!("{}/rswitcher.ico", out_dir);
+    let images: Vec<(usize, Vec<u8>)> = [16usize, 32, 48]
+        .iter()
+        .map(|&s| (s, make_icon_rgba(s)))
+        .collect();
+    write_ico_file(&ico_path, &images);
+    ico_path
+}
+
+// 5-wide × 7-tall glyph bitmaps (same as in main.rs).
+const GLYPH_R: [u8; 7] = [0b11100, 0b10010, 0b11100, 0b10100, 0b10010, 0b00000, 0b00000];
+const GLYPH_S: [u8; 7] = [0b01110, 0b10000, 0b01110, 0b00001, 0b01110, 0b00000, 0b00000];
+
+fn make_icon_rgba(size: usize) -> Vec<u8> {
+    let scale   = (size / 16).max(1);
+    let glyph_w = 5 * scale;
+    let glyph_h = 7 * scale;
+    let gap     = scale;
+    let text_w  = glyph_w * 2 + gap;
+    let off_x   = size.saturating_sub(text_w) / 2;
+    let off_y   = size.saturating_sub(glyph_h) / 2;
+    let radius  = (size as f32 * 0.15_f32).max(1.0_f32);
+
+    let bg: [u8; 3] = [0x1a, 0x2e, 0x6c];
+    let fg: [u8; 3] = [0xd0, 0xd8, 0xe0];
+
+    let half_w = glyph_w;
+    let glyph_pixel = |gx: usize, gy: usize| -> bool {
+        if gy >= glyph_h { return false; }
+        let row = gy / scale;
+        let (glyph, col_pixel) = if gx < half_w {
+            (&GLYPH_R, gx)
+        } else if gx < half_w + gap {
+            return false;
+        } else {
+            (&GLYPH_S, gx - half_w - gap)
+        };
+        if row >= 7 { return false; }
+        let col = col_pixel / scale;
+        if col >= 5 { return false; }
+        (glyph[row] >> (4 - col)) & 1 == 1
+    };
+
+    let mut pixels = vec![0u8; size * size * 4];
+    let s = size as f32;
+    for py in 0..size {
+        for px in 0..size {
+            let idx = (py * size + px) * 4;
+            let fx = px as f32 + 0.5;
+            let fy = py as f32 + 0.5;
+            let qx = (fx - s * 0.5).abs() - (s * 0.5 - radius);
+            let qy = (fy - s * 0.5).abs() - (s * 0.5 - radius);
+            let dist = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius;
+            let alpha = (1.0_f32 - dist.clamp(-1.0, 1.0) * 0.5 - 0.5).clamp(0.0, 1.0);
+            if alpha <= 0.0 { continue; }
+            let is_text = px >= off_x
+                && py >= off_y
+                && px < off_x + text_w
+                && py < off_y + glyph_h
+                && glyph_pixel(px - off_x, py - off_y);
+            let c = if is_text { fg } else { bg };
+            pixels[idx]     = c[0];
+            pixels[idx + 1] = c[1];
+            pixels[idx + 2] = c[2];
+            pixels[idx + 3] = (alpha * 255.0) as u8;
+        }
+    }
+    pixels
+}
+
+/// Write a multi-size .ico file.  Each image is stored as a 32bpp DIB
+/// (BITMAPINFOHEADER + BGRA pixels, bottom-to-top) with an all-zero AND mask.
+fn write_ico_file(path: &str, images: &[(usize, Vec<u8>)]) {
+    let n = images.len() as u16;
+    let header_size: u32 = 6 + n as u32 * 16;
+
+    let dibs: Vec<Vec<u8>> = images.iter()
+        .map(|(size, rgba)| encode_dib(rgba, *size))
+        .collect();
+
+    let mut offsets: Vec<u32> = Vec::new();
+    let mut offset = header_size;
+    for dib in &dibs {
+        offsets.push(offset);
+        offset += dib.len() as u32;
+    }
+
+    let mut data: Vec<u8> = Vec::new();
+
+    // ICONDIR
+    data.extend_from_slice(&[0u8, 0]);
+    data.extend_from_slice(&1u16.to_le_bytes()); // type = icon
+    data.extend_from_slice(&n.to_le_bytes());
+
+    // ICONDIRENTRY per image
+    for (i, (size, _)) in images.iter().enumerate() {
+        let w = if *size >= 256 { 0u8 } else { *size as u8 };
+        data.push(w);
+        data.push(w);
+        data.push(0); // color count
+        data.push(0); // reserved
+        data.extend_from_slice(&1u16.to_le_bytes());
+        data.extend_from_slice(&32u16.to_le_bytes());
+        data.extend_from_slice(&(dibs[i].len() as u32).to_le_bytes());
+        data.extend_from_slice(&offsets[i].to_le_bytes());
+    }
+
+    for dib in &dibs { data.extend_from_slice(dib); }
+
+    std::fs::write(path, &data).expect("cannot write rswitcher.ico");
+}
+
+fn encode_dib(rgba: &[u8], size: usize) -> Vec<u8> {
+    // Convert RGBA → BGRA and flip rows (DIB = bottom-to-top).
+    let stride = size * 4;
+    let mut bgra = vec![0u8; rgba.len()];
+    for row in 0..size {
+        let src = (size - 1 - row) * stride;
+        let dst = row * stride;
+        for col in 0..size {
+            bgra[dst + col * 4]     = rgba[src + col * 4 + 2]; // B
+            bgra[dst + col * 4 + 1] = rgba[src + col * 4 + 1]; // G
+            bgra[dst + col * 4 + 2] = rgba[src + col * 4];     // R
+            bgra[dst + col * 4 + 3] = rgba[src + col * 4 + 3]; // A
+        }
+    }
+
+    let mask_row_bytes = ((size + 31) / 32) * 4;
+    let mask_size = mask_row_bytes * size;
+
+    let mut dib: Vec<u8> = Vec::new();
+    // BITMAPINFOHEADER
+    dib.extend_from_slice(&40u32.to_le_bytes());
+    dib.extend_from_slice(&(size as i32).to_le_bytes());
+    dib.extend_from_slice(&((size * 2) as i32).to_le_bytes()); // height doubled for AND mask
+    dib.extend_from_slice(&1u16.to_le_bytes());
+    dib.extend_from_slice(&32u16.to_le_bytes());
+    dib.extend_from_slice(&[0u8; 24]); // biCompression..biClrImportant all zero
+
+    dib.extend_from_slice(&bgra);                         // XOR mask (pixels)
+    dib.extend(std::iter::repeat(0u8).take(mask_size));   // AND mask (all visible)
+    dib
 }
 
 // ── Bigram frequency table generator ─────────────────────────────────────────

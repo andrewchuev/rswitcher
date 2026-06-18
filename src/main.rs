@@ -41,8 +41,8 @@ pub use settings::Settings;
 // Tray watcher
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Set to true by the tray watcher thread; cleared + acted on in update().
-static SHOW_WINDOW: AtomicBool = AtomicBool::new(false);
+// Set to true when the user requests to show the window via the tray menu/double-click.
+static WAS_SHOW_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 // ── Tray icon handle shared with the watcher thread ───────────────────────────
 //
@@ -66,21 +66,22 @@ fn spawn_tray_watcher(ctx: egui::Context, show_id: MenuId, quit_id: MenuId) {
             let mut last_icon: Option<LangIcon> = None;
             loop {
                 // ── Menu events ───────────────────────────────────────────────
-                let mut need_repaint = false;
                 while let Ok(ev) = MenuEvent::receiver().try_recv() {
                     if ev.id == quit_id {
                         log_info!("=== RSwitcher quit via tray menu ===");
                         std::process::exit(0);
                     } else if ev.id == show_id {
-                        SHOW_WINDOW.store(true, Ordering::Relaxed);
-                        need_repaint = true;
+                        WAS_SHOW_REQUESTED.store(true, Ordering::Relaxed);
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                     }
                 }
                 // ── Tray icon events (double-click → show settings) ───────────
                 while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
                     if matches!(ev, TrayIconEvent::DoubleClick { .. }) {
-                        SHOW_WINDOW.store(true, Ordering::Relaxed);
-                        need_repaint = true;
+                        WAS_SHOW_REQUESTED.store(true, Ordering::Relaxed);
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                     }
                 }
                 // ── Language icon update ──────────────────────────────────────
@@ -103,9 +104,6 @@ fn spawn_tray_watcher(ctx: egui::Context, show_id: MenuId, quit_id: MenuId) {
                         }
                     }
                     last_icon = new_lang;
-                }
-                if need_repaint {
-                    ctx.request_repaint();
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
@@ -532,6 +530,7 @@ struct RswitcherApp {
     settings: Arc<RwLock<Settings>>,
     new_exception: String,
     autostart_cached: bool,
+    first_frame: bool,
 }
 
 impl RswitcherApp {
@@ -540,20 +539,19 @@ impl RswitcherApp {
             settings,
             new_exception: String::new(),
             autostart_cached: autostart::is_enabled(),
+            first_frame: true,
         }
-    }
-
-    fn show_window(&self, ctx: &egui::Context) {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
 }
 
 impl eframe::App for RswitcherApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // ── Show-window request from tray watcher thread ─────────────────────
-        if SHOW_WINDOW.swap(false, Ordering::Relaxed) {
-            self.show_window(ctx);
+        // ── Start hidden on the first frame unless explicitly requested ──────
+        if self.first_frame {
+            self.first_frame = false;
+            if !WAS_SHOW_REQUESTED.load(Ordering::Relaxed) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            }
         }
 
         // ── Close / hide logic (window X button → hide, not quit) ───────────

@@ -132,36 +132,7 @@ const GLYPH_R: [u8; 7] = [
     0b00000,
     0b00000,
 ];
-#[rustfmt::skip]
-const GLYPH_U: [u8; 7] = [
-    0b00000,
-    0b00000,
-    0b10010, // █..█.
-    0b10010, // █..█.
-    0b10010, // █..█.
-    0b01110, // .███.
-    0b00000,
-];
-#[rustfmt::skip]
-const GLYPH_E: [u8; 7] = [
-    0b11110, // ████.
-    0b10000, // █....
-    0b11100, // ███..
-    0b10000, // █....
-    0b11110, // ████.
-    0b00000,
-    0b00000,
-];
-#[rustfmt::skip]
-const GLYPH_N: [u8; 7] = [
-    0b00000,
-    0b00000,
-    0b11100, // ███..
-    0b10010, // █..█.
-    0b10010, // █..█.
-    0b10010, // █..█.
-    0b00000,
-];
+
 
 // 's' glyph — used in the app icon ("Rs" = RSwitcher)
 #[rustfmt::skip]
@@ -235,73 +206,12 @@ pub fn make_app_icon_rgba(size: usize) -> Vec<u8> {
 }
 
 fn make_lang_icon(lang: LangIcon) -> tray_icon::Icon {
-    const SIZE: usize = 32;
-    const SCALE: usize = 2; // each glyph pixel → 2×2 screen pixels
-    const GLYPH_W: usize = 5;
-    const GLYPH_H: usize = 7;
-    const LETTER_GAP: usize = 2;
-
-    let text_w = GLYPH_W * SCALE * 2 + LETTER_GAP;
-    let text_h = GLYPH_H * SCALE;
-    let off_x = (SIZE - text_w) / 2;
-    let off_y = (SIZE - text_h) / 2;
-
-    let (bg, fg): ([u8; 3], [u8; 3]) = match lang {
-        LangIcon::Ru => ([0x1a, 0x2e, 0x6c], [0xd0, 0xd8, 0xe0]),
-        LangIcon::En => ([0x7a, 0x1a, 0x1a], [0xd0, 0xd8, 0xe0]),
+    const SIZE: u32 = 32;
+    let bytes: &[u8] = match lang {
+        LangIcon::Ru => include_bytes!("../assets/ru.raw"),
+        LangIcon::En => include_bytes!("../assets/en.raw"),
     };
-    let (g0, g1): (&[u8; 7], &[u8; 7]) = match lang {
-        LangIcon::Ru => (&GLYPH_R, &GLYPH_U),
-        LangIcon::En => (&GLYPH_E, &GLYPH_N),
-    };
-
-    let half_w = GLYPH_W * SCALE;
-    let glyph_pixel = |gx: usize, gy: usize| -> bool {
-        let row = gy / SCALE;
-        let (glyph, col_pixel) = if gx < half_w {
-            (g0, gx)
-        } else if gx < half_w + LETTER_GAP {
-            return false;
-        } else {
-            (g1, gx - half_w - LETTER_GAP)
-        };
-        let col = col_pixel / SCALE;
-        (glyph[row] >> (4 - col)) & 1 == 1
-    };
-
-    let mut pixels = vec![0u8; SIZE * SIZE * 4];
-    let s = SIZE as f32;
-    for py in 0..SIZE {
-        for px in 0..SIZE {
-            let idx = (py * SIZE + px) * 4;
-
-            // Signed-distance field for a rounded rectangle (radius = 4).
-            let fx = px as f32 + 0.5;
-            let fy = py as f32 + 0.5;
-            let qx = (fx - s * 0.5).abs() - (s * 0.5 - 4.0);
-            let qy = (fy - s * 0.5).abs() - (s * 0.5 - 4.0);
-            let dist = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - 4.0;
-            let bg_alpha = (1.0 - dist.clamp(-1.0, 1.0) * 0.5 - 0.5).clamp(0.0, 1.0);
-
-            if bg_alpha <= 0.0 {
-                continue; // pixel stays [0,0,0,0]
-            }
-
-            let is_text = px >= off_x
-                && py >= off_y
-                && px < off_x + text_w
-                && py < off_y + text_h
-                && glyph_pixel(px - off_x, py - off_y);
-
-            let c = if is_text { fg } else { bg };
-            pixels[idx]     = c[0];
-            pixels[idx + 1] = c[1];
-            pixels[idx + 2] = c[2];
-            pixels[idx + 3] = (bg_alpha * 255.0) as u8;
-        }
-    }
-
-    tray_icon::Icon::from_rgba(pixels, SIZE as u32, SIZE as u32).unwrap()
+    tray_icon::Icon::from_rgba(bytes.to_vec(), SIZE, SIZE).unwrap()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

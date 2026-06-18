@@ -17,79 +17,19 @@ fn main() {
 
 // ── Application icon generator ────────────────────────────────────────────────
 //
-// Generates an .ico file with 16×16, 32×32, and 48×48 variants.
-// Uses the same design as the runtime tray icon: dark-blue rounded rectangle
-// with "Rs" text in light-gray (R from GLYPH_R, s from GLYPH_S).
+// Reads pre-rendered raw RGBA assets and packages them into a multi-resolution
+// .ico file with 16x16, 32x32, 48x48, and 256x256 sizes.
 
 fn generate_icon(out_dir: &str) -> String {
     let ico_path = format!("{}/rswitcher.ico", out_dir);
-    let images: Vec<(usize, Vec<u8>)> = [16usize, 32, 48]
-        .iter()
-        .map(|&s| (s, make_icon_rgba(s)))
-        .collect();
+    let images: Vec<(usize, Vec<u8>)> = vec![
+        (16, include_bytes!("assets/app_16.raw").to_vec()),
+        (32, include_bytes!("assets/app_32.raw").to_vec()),
+        (48, include_bytes!("assets/app_48.raw").to_vec()),
+        (256, include_bytes!("assets/app_256.raw").to_vec()),
+    ];
     write_ico_file(&ico_path, &images);
     ico_path
-}
-
-// 5-wide × 7-tall glyph bitmaps (same as in main.rs).
-const GLYPH_R: [u8; 7] = [0b11100, 0b10010, 0b11100, 0b10100, 0b10010, 0b00000, 0b00000];
-const GLYPH_S: [u8; 7] = [0b01110, 0b10000, 0b01110, 0b00001, 0b01110, 0b00000, 0b00000];
-
-fn make_icon_rgba(size: usize) -> Vec<u8> {
-    let scale   = (size / 16).max(1);
-    let glyph_w = 5 * scale;
-    let glyph_h = 7 * scale;
-    let gap     = scale;
-    let text_w  = glyph_w * 2 + gap;
-    let off_x   = size.saturating_sub(text_w) / 2;
-    let off_y   = size.saturating_sub(glyph_h) / 2;
-    let radius  = (size as f32 * 0.15_f32).max(1.0_f32);
-
-    let bg: [u8; 3] = [0x1a, 0x2e, 0x6c];
-    let fg: [u8; 3] = [0xd0, 0xd8, 0xe0];
-
-    let half_w = glyph_w;
-    let glyph_pixel = |gx: usize, gy: usize| -> bool {
-        if gy >= glyph_h { return false; }
-        let row = gy / scale;
-        let (glyph, col_pixel) = if gx < half_w {
-            (&GLYPH_R, gx)
-        } else if gx < half_w + gap {
-            return false;
-        } else {
-            (&GLYPH_S, gx - half_w - gap)
-        };
-        if row >= 7 { return false; }
-        let col = col_pixel / scale;
-        if col >= 5 { return false; }
-        (glyph[row] >> (4 - col)) & 1 == 1
-    };
-
-    let mut pixels = vec![0u8; size * size * 4];
-    let s = size as f32;
-    for py in 0..size {
-        for px in 0..size {
-            let idx = (py * size + px) * 4;
-            let fx = px as f32 + 0.5;
-            let fy = py as f32 + 0.5;
-            let qx = (fx - s * 0.5).abs() - (s * 0.5 - radius);
-            let qy = (fy - s * 0.5).abs() - (s * 0.5 - radius);
-            let dist = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius;
-            let alpha = (1.0_f32 - dist.clamp(-1.0, 1.0) * 0.5 - 0.5).clamp(0.0, 1.0);
-            if alpha <= 0.0 { continue; }
-            let is_text = px >= off_x
-                && py >= off_y
-                && px < off_x + text_w
-                && py < off_y + glyph_h
-                && glyph_pixel(px - off_x, py - off_y);
-            let c = if is_text { fg } else { bg };
-            pixels[idx]     = c[0];
-            pixels[idx + 1] = c[1];
-            pixels[idx + 2] = c[2];
-            pixels[idx + 3] = (alpha * 255.0) as u8;
-        }
-    }
-    pixels
 }
 
 /// Write a multi-size .ico file.  Each image is stored as a 32bpp DIB

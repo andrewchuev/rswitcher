@@ -2,22 +2,48 @@
 //!
 //! Writes to `%APPDATA%\rswitcher\logs\rswitcher_<unix>_<pid>.log`.
 //! Files older than 7 days are removed on startup.
-//! Safe to call from any thread; flushes after every write so nothing is lost
-//! if the hook thread is killed unexpectedly.
+//! Safe to call from any thread; uses a non-blocking channel to offload all I/O
+//! to a background writer thread.
 
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::AtomicBool;
+use std::sync::{mpsc, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-// Mutex<Option<…>> so it can be a const-initialised static.
-// None = not yet initialised; Some = file is open and ready.
-static LOG: Mutex<Option<BufWriter<File>>> = Mutex::new(None);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LogLevel {
+    Debug,
+    Info,
+    Error,
+}
+
+impl LogLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LogLevel::Debug => "DEBUG",
+            LogLevel::Info => "INFO",
+            LogLevel::Error => "ERROR",
+        }
+    }
+}
+
+pub struct LogMessage {
+    pub level: LogLevel,
+    pub message: String,
+    pub elapsed: Duration,
+}
+
+static LOG_SENDER: OnceLock<mpsc::SyncSender<LogMessage>> = OnceLock::new();
 static START: OnceLock<Instant> = OnceLock::new();
+static LOGGER_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// Initialise the logger.  Must be called once from `main()` before any hooks
 /// are installed.  Subsequent calls are silently ignored.
 pub fn init() {
+    if LOGGER_INITIALIZED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     START.get_or_init(Instant::now);
 
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
@@ -38,38 +64,67 @@ pub fn init() {
     let pid = std::process::id();
     let path = log_dir.join(format!("rswitcher_{}_{}.log", unix_secs, pid));
 
-    if let Ok(file) = File::create(path) {
-        if let Ok(mut guard) = LOG.lock() {
-            *guard = Some(BufWriter::new(file));
-        }
+    let file = match File::create(path) {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+
+    let (tx, rx) = mpsc::sync_channel::<LogMessage>(1024);
+    if LOG_SENDER.set(tx).is_err() {
+        return;
     }
+
+    std::thread::Builder::new()
+        .name("rswitcher-logger".into())
+        .spawn(move || {
+            let mut writer = BufWriter::new(file);
+            while let Ok(msg) = rx.recv() {
+                let stamp = fmt_elapsed(msg.elapsed);
+                let _ = writeln!(writer, "[{}] [{}] {}", stamp, msg.level.as_str(), msg.message);
+                let _ = writer.flush();
+            }
+        })
+        .expect("failed to spawn logger thread");
 }
 
-/// Write one line to the log.  Prepends an elapsed-time stamp `[MM:SS.mmm]`.
-/// No-ops silently if the logger was never initialised (e.g. in unit tests).
-pub fn write(msg: &str) {
+/// Write one message to the log queue. Prepends elapsed duration.
+/// Uses a non-blocking `try_send` to ensure the calling thread (e.g. hook thread)
+/// is never blocked by slow disk I/O.
+pub fn write(level: LogLevel, msg: String) {
     let elapsed = START.get_or_init(Instant::now).elapsed();
-    let stamp = fmt_elapsed(elapsed);
-
-    if let Ok(mut guard) = LOG.lock() {
-        if let Some(ref mut w) = *guard {
-            let _ = writeln!(w, "[{}] {}", stamp, msg);
-            let _ = w.flush();
-        }
+    if let Some(sender) = LOG_SENDER.get() {
+        let _ = sender.try_send(LogMessage {
+            level,
+            message: msg,
+            elapsed,
+        });
     }
 }
 
-// Convenience macro ────────────────────────────────────────────────────────────
+// Convenience macros ──────────────────────────────────────────────────────────
 
-/// Log a formatted message to the current session log file.
-///
-/// ```ignore
-/// log!("switch: {:?} → {:?}", original, new_word);
-/// ```
+/// Log a debug message (only captured in debug builds).
 #[macro_export]
-macro_rules! log {
+macro_rules! log_debug {
     ($($arg:tt)*) => {
-        $crate::logger::write(&format!($($arg)*))
+        #[cfg(debug_assertions)]
+        $crate::logger::write($crate::logger::LogLevel::Debug, format!($($arg)*))
+    };
+}
+
+/// Log an informational message.
+#[macro_export]
+macro_rules! log_info {
+    ($($arg:tt)*) => {
+        $crate::logger::write($crate::logger::LogLevel::Info, format!($($arg)*))
+    };
+}
+
+/// Log an error message.
+#[macro_export]
+macro_rules! log_error {
+    ($($arg:tt)*) => {
+        $crate::logger::write($crate::logger::LogLevel::Error, format!($($arg)*))
     };
 }
 

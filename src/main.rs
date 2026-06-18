@@ -23,7 +23,7 @@ use windows::Win32::{
     System::LibraryLoader::GetModuleHandleW,
     UI::{
         Input::KeyboardAndMouse::{
-            GetKeyboardLayout, GetKeyState, VIRTUAL_KEY, VK_BACK, VK_CAPITAL, VK_LWIN,
+            GetAsyncKeyState, GetKeyboardLayout, GetKeyState, VIRTUAL_KEY, VK_BACK, VK_CAPITAL, VK_LWIN,
             VK_RETURN, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB,
         },
         WindowsAndMessaging::{
@@ -69,7 +69,7 @@ fn spawn_tray_watcher(ctx: egui::Context, show_id: MenuId, quit_id: MenuId) {
                 let mut need_repaint = false;
                 while let Ok(ev) = MenuEvent::receiver().try_recv() {
                     if ev.id == quit_id {
-                        log!("=== RSwitcher quit via tray menu ===");
+                        log_info!("=== RSwitcher quit via tray menu ===");
                         std::process::exit(0);
                     } else if ev.id == show_id {
                         SHOW_WINDOW.store(true, Ordering::Relaxed);
@@ -386,7 +386,7 @@ unsafe extern "system" fn hook_proc(
                 WORD_BUF.with(|c| {
                     let mut buf = c.borrow_mut();
                     if !buf.is_empty() {
-                        log!("[EXCLUDED] foreground={} — buffer cleared", name);
+                        log_info!("[EXCLUDED] foreground={} — buffer cleared", name);
                         buf.clear();
                     }
                 });
@@ -431,6 +431,18 @@ fn is_modifier_vk(vk: u16) -> bool {
     )
 }
 
+/// Returns true if the physical key for `configured` vk is currently held.
+/// Expands logical VKs (VK_SHIFT/CTRL/MENU) to their left+right variants.
+unsafe fn key_is_held(configured: u16) -> bool {
+    let held = |vk: i32| GetAsyncKeyState(vk) < 0;
+    match configured {
+        0x10 => held(0xA0) || held(0xA1), // VK_SHIFT
+        0x11 => held(0xA2) || held(0xA3), // VK_CONTROL
+        0x12 => held(0xA4) || held(0xA5), // VK_MENU
+        v    => held(v as i32),
+    }
+}
+
 /// Match an actual low-level VK code against a configured (possibly logical) VK.
 /// VK_SHIFT (0x10) matches both VK_LSHIFT (0xA0) and VK_RSHIFT (0xA1).
 fn vk_matches(actual: u16, configured: u16) -> bool {
@@ -448,15 +460,42 @@ unsafe fn process_key(
     hotkey: Option<(VIRTUAL_KEY, bool)>,
     undo_hotkey: Option<(VIRTUAL_KEY, bool)>,
 ) -> bool {
-    let win_held = GetKeyState(VK_LWIN.0 as i32) < 0
-        || GetKeyState(VK_RWIN.0 as i32) < 0;
+    // GetAsyncKeyState reads the physical key state in real time.
+    // GetKeyState inside a WH_KEYBOARD_LL hook can return stale state for
+    // the Win key because Windows handles VK_LWIN/VK_RWIN at a lower level.
+    let win_held = GetAsyncKeyState(VK_LWIN.0 as i32) < 0
+        || GetAsyncKeyState(VK_RWIN.0 as i32) < 0;
+
+    // ── Debug: log every key with modifiers and buffer state ─────────────────
+    log_debug!(
+        "[KEY] vk={:#04x} win={} buf={}",
+        vk.0, win_held as u8, buf.len()
+    );
+
+    // Returns true when `vk` matches the configured hotkey key and the Win
+    // modifier state is satisfied — in EITHER press order:
+    //   Order A: Win↓ first, then trigger key↓  (win_held already true)
+    //   Order B: trigger key↓ first, then Win↓  (vk is Win, trigger key held)
+    let hotkey_fires = |vk: VIRTUAL_KEY, hk_vk: VIRTUAL_KEY, hk_win: bool| -> bool {
+        let is_win_vk = vk.0 == VK_LWIN.0 || vk.0 == VK_RWIN.0;
+        if hk_win {
+            // Order A: trigger key pressed while Win already held
+            let order_a = vk_matches(vk.0, hk_vk.0) && win_held;
+            // Order B: Win pressed while trigger key is already held
+            let order_b = is_win_vk && key_is_held(hk_vk.0);
+            order_a || order_b
+        } else {
+            // No Win modifier required — simple VK match, Win must NOT be held
+            vk_matches(vk.0, hk_vk.0) && !win_held
+        }
+    };
 
     // ── Undo last switch ─────────────────────────────────────────────────────
     if let Some((uh_vk, uh_win)) = undo_hotkey {
-        if vk_matches(vk.0, uh_vk.0) && win_held == uh_win {
+        if hotkey_fires(vk, uh_vk, uh_win) {
             let state = UNDO.with(|u| u.borrow_mut().take());
             if let Some(s) = state {
-                log!(
+                log_info!(
                     "[UNDO] restoring {:?}, erase={}, restore_to_ru={}",
                     s.original_word, s.erase_len, s.restore_to_ru
                 );
@@ -468,7 +507,7 @@ unsafe fn process_key(
                 };
                 switcher::perform_switch(&undo_action, None);
             } else {
-                log!("[UNDO] hotkey pressed but no undo state available");
+                log_info!("[UNDO] hotkey pressed but no undo state available");
             }
             buf.clear();
             if uh_win {
@@ -481,12 +520,12 @@ unsafe fn process_key(
 
     // ── Force switch hotkey ──────────────────────────────────────────────────
     if let Some((hk_vk, hk_win)) = hotkey {
-        if vk_matches(vk.0, hk_vk.0) && win_held == hk_win {
+        if hotkey_fires(vk, hk_vk, hk_win) {
             let lang = foreground_lang();
             let snap = buf.detection_snapshot();
             if let Some(action) = buf.force_switch(lang) {
                 if let Some(ref s) = snap {
-                    log!(
+                    log_info!(
                         "[FORCE] lang={:#06x} en={:?} ru={:?} score_en={:.2} score_ru={:.2} → {}→{}",
                         lang, s.en_word, s.ru_word, s.score_en, s.score_ru,
                         if action.to_ru { "EN" } else { "RU" },
@@ -497,7 +536,7 @@ unsafe fn process_key(
                 buf.clear();
                 switcher::perform_switch(&action, None);
             } else {
-                log!("[FORCE] lang={:#06x} buf_len={} → no action (untranslatable or wrong layout)", lang, buf.len());
+                log_info!("[FORCE] lang={:#06x} buf_len={} → no action (untranslatable or wrong layout)", lang, buf.len());
                 buf.clear();
             }
             if hk_win {
@@ -524,14 +563,14 @@ unsafe fn process_key(
             // Log the detection attempt with full scores.
             if let Some(ref s) = snap {
                 match &result {
-                    Some(action) => log!(
+                    Some(action) => log_info!(
                         "[DETECT] lang={:#06x} en={:?} ru={:?} score_en={:.2} score_ru={:.2} diff={:+.2} → SWITCH_{} boundary={:#04x}",
                         lang, s.en_word, s.ru_word, s.score_en, s.score_ru,
                         s.score_en - s.score_ru,
                         if action.to_ru { "EN→RU" } else { "RU→EN" },
                         vk.0
                     ),
-                    None => log!(
+                    None => log_info!(
                         "[DETECT] lang={:#06x} en={:?} ru={:?} score_en={:.2} score_ru={:.2} diff={:+.2} → skip (threshold={:.1})",
                         lang, s.en_word, s.ru_word, s.score_en, s.score_ru,
                         s.score_en - s.score_ru,
@@ -554,10 +593,18 @@ unsafe fn process_key(
 
         _ => {
             if layout::is_translatable_vk(vk.0) {
-                let shift = GetKeyState(VK_SHIFT.0 as i32) < 0;
-                let caps = GetKeyState(VK_CAPITAL.0 as i32) & 1 != 0;
-                buf.push(vk.0, shift ^ caps);
-                UNDO.with(|u| *u.borrow_mut() = None);
+                let ctrl_held = GetAsyncKeyState(0xA2_i32) < 0  // VK_LCONTROL
+                    || GetAsyncKeyState(0xA3_i32) < 0;           // VK_RCONTROL
+                if ctrl_held {
+                    // Ctrl+letter is a shortcut (Ctrl+C/V/Z/A/…), not text input.
+                    buf.clear();
+                    UNDO.with(|u| *u.borrow_mut() = None);
+                } else {
+                    let shift = GetKeyState(VK_SHIFT.0 as i32) < 0;
+                    let caps = GetKeyState(VK_CAPITAL.0 as i32) & 1 != 0;
+                    buf.push(vk.0, shift ^ caps);
+                    UNDO.with(|u| *u.borrow_mut() = None);
+                }
             } else if is_modifier_vk(vk.0) {
                 // Modifier key (Win/Shift/Ctrl/Alt) — keep the buffer intact so
                 // the user can follow with a hotkey combo without clearing state.
@@ -568,14 +615,14 @@ unsafe fn process_key(
                 let result = buf.detect_mismatch(lang);
                 if let Some(ref s) = snap {
                     match &result {
-                        Some(action) => log!(
+                        Some(action) => log_info!(
                             "[DETECT] lang={:#06x} en={:?} ru={:?} score_en={:.2} score_ru={:.2} diff={:+.2} → SWITCH_{} boundary=vk{:#04x}",
                             lang, s.en_word, s.ru_word, s.score_en, s.score_ru,
                             s.score_en - s.score_ru,
                             if action.to_ru { "EN→RU" } else { "RU→EN" },
                             vk.0
                         ),
-                        None if s.len >= 2 => log!(
+                        None if s.len >= 2 => log_info!(
                             "[DETECT] lang={:#06x} en={:?} ru={:?} score_en={:.2} score_ru={:.2} diff={:+.2} → skip",
                             lang, s.en_word, s.ru_word, s.score_en, s.score_ru,
                             s.score_en - s.score_ru,
@@ -854,11 +901,12 @@ fn main() -> eframe::Result<()> {
 
     {
         let s = settings.read().unwrap();
-        log!(
-            "=== RSwitcher started (pid={}) ===",
-            std::process::id()
+        log_info!(
+            "=== RSwitcher started (pid={}, path={:?}) ===",
+            std::process::id(),
+            std::env::current_exe().ok()
         );
-        log!(
+        log_info!(
             "settings: enabled={} exceptions={:?} hotkey={} undo_hotkey={}",
             s.enabled,
             s.exceptions,
@@ -873,7 +921,7 @@ fn main() -> eframe::Result<()> {
                 "off".into()
             },
         );
-        log!(
+        log_info!(
             "bigrams: threshold={:.1} nat/bigram  (EN_BIGRAMS[676], RU_BIGRAMS[1024])",
             bigrams::THRESHOLD_PER_BIGRAM
         );

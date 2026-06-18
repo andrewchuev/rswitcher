@@ -1,5 +1,27 @@
 use crate::{bigrams, layout};
 
+const COMMON_RU_SHORT: &[&str] = &[
+    "без", "был", "быт", "вас", "век", "все", "всю", "всё", "вы", "где",
+    "да", "два", "для", "до", "дом", "его", "ее", "ей", "ему", "еще",
+    "ещё", "её", "же", "за", "из", "изо", "или", "им", "ими", "имя",
+    "их", "как", "кто", "ли", "мне", "мог", "мои", "моя", "мы", "на",
+    "нам", "нас", "ней", "нет", "них", "но", "об", "обо", "он", "она",
+    "они", "оно", "от", "ото", "под", "при", "про", "раз", "сам", "сих",
+    "со", "так", "там", "те", "тем", "тех", "то", "той", "том", "тот",
+    "три", "тут", "ты", "уж", "уже", "чем", "что", "это", "эту"
+];
+
+const COMMON_EN_SHORT: &[&str] = &[
+    "am", "an", "and", "any", "are", "as", "at", "bad", "be", "big",
+    "but", "by", "can", "day", "did", "do", "doc", "few", "for", "get",
+    "go", "had", "has", "he", "her", "him", "his", "how", "if", "in",
+    "is", "it", "its", "let", "low", "mad", "may", "me", "my", "new",
+    "no", "not", "now", "of", "off", "old", "on", "one", "or", "our",
+    "out", "own", "red", "run", "sad", "say", "see", "she", "so", "the",
+    "too", "try", "two", "up", "use", "was", "way", "we", "who", "yes",
+    "you"
+];
+
 #[derive(Debug, Clone)]
 struct Entry {
     vk: u16,
@@ -92,18 +114,62 @@ impl WordBuffer {
 
     /// Auto-detect mismatch at a word boundary (requires >= 2 buffered keys).
     ///
+    /// Long words (>= 4 chars) are scored using the bigram model.
+    /// Short words (2-3 chars) are matched against a high-frequency dictionary.
+    ///
     /// `active_lang` is the low 16-bit word of the foreground window's HKL.
     pub fn detect_mismatch(&self, active_lang: u16) -> Option<SwitchAction> {
-        self.detect_impl(2, active_lang)
+        self.detect_impl(active_lang)
     }
 
     /// Hotkey forced switch (requires >= 1 buffered key).
+    ///
+    /// Unlike auto-detection, bypasses the bigram score threshold entirely —
+    /// the user explicitly requested the switch, so we trust their intent.
+    /// Returns None only when the buffer is empty or the translation is invalid
+    /// (e.g. the keys don't map to valid Cyrillic in the RU interpretation).
     pub fn force_switch(&self, active_lang: u16) -> Option<SwitchAction> {
-        self.detect_impl(1, active_lang)
+        if self.entries.is_empty() {
+            return None;
+        }
+        let en: String = self
+            .entries
+            .iter()
+            .filter_map(|e| layout::vk_to_en(e.vk, e.is_upper))
+            .collect();
+        let ru: String = self
+            .entries
+            .iter()
+            .filter_map(|e| layout::vk_to_ru(e.vk, e.is_upper))
+            .collect();
+        if en.chars().count() != self.entries.len() || ru.chars().count() != self.entries.len() {
+            return None;
+        }
+        if !ru.chars().all(is_cyrillic) {
+            return None;
+        }
+        if layout::hkl_is_russian(active_lang) {
+            Some(SwitchAction {
+                backspaces: self.len(),
+                new_word: en,
+                to_ru: false,
+                original_word: ru,
+            })
+        } else if layout::hkl_is_english(active_lang) {
+            Some(SwitchAction {
+                backspaces: self.len(),
+                new_word: ru,
+                to_ru: true,
+                original_word: en,
+            })
+        } else {
+            None
+        }
     }
 
-    fn detect_impl(&self, min_len: usize, active_lang: u16) -> Option<SwitchAction> {
-        if self.entries.len() < min_len {
+    fn detect_impl(&self, active_lang: u16) -> Option<SwitchAction> {
+        let len = self.entries.len();
+        if len < 2 {
             return None;
         }
 
@@ -119,37 +185,51 @@ impl WordBuffer {
             .filter_map(|e| layout::vk_to_ru(e.vk, e.is_upper))
             .collect();
 
-        if en.chars().count() != self.entries.len() || ru.chars().count() != self.entries.len() {
+        if en.chars().count() != len || ru.chars().count() != len {
+            return None;
+        }
+
+        let en_lower = en.to_lowercase();
+        let ru_lower = ru.to_lowercase();
+
+
+
+        // ── 1. Dictionary-based check for short words (2-3 chars) ─────────────
+        if len == 2 || len == 3 {
+            if layout::hkl_is_russian(active_lang) {
+                let is_common_en = COMMON_EN_SHORT.binary_search(&en_lower.as_str()).is_ok();
+                let is_common_ru = COMMON_RU_SHORT.binary_search(&ru_lower.as_str()).is_ok();
+                if is_common_en && !is_common_ru {
+                    return Some(SwitchAction {
+                        backspaces: len,
+                        new_word: en,
+                        to_ru: false,
+                        original_word: ru,
+                    });
+                }
+            } else if layout::hkl_is_english(active_lang) {
+                let is_common_ru = COMMON_RU_SHORT.binary_search(&ru_lower.as_str()).is_ok();
+                let is_common_en = COMMON_EN_SHORT.binary_search(&en_lower.as_str()).is_ok();
+                if is_common_ru && !is_common_en {
+                    return Some(SwitchAction {
+                        backspaces: len,
+                        new_word: ru,
+                        to_ru: true,
+                        original_word: en,
+                    });
+                }
+            }
+            return None;
+        }
+
+        // ── 2. Standard bigram language-model check (>= 4 chars) ──────────────
+        if len < 4 {
             return None;
         }
 
         // Score using lowercase words (bigram tables are built from lowercased text).
-        let score_en = bigrams::score_en(&en.to_lowercase());
-        let score_ru = bigrams::score_ru(&ru.to_lowercase());
-
-        // Single-char words produce NEG_INFINITY bigram scores (need ≥ 2 chars).
-        // This only happens in force_switch (min_len=1). Skip threshold check and
-        // decide purely from character type (Cyrillic vs ASCII).
-        if score_en == f32::NEG_INFINITY && score_ru == f32::NEG_INFINITY {
-            if layout::hkl_is_russian(active_lang) && ru.chars().all(is_cyrillic) {
-                return Some(SwitchAction {
-                    backspaces: self.len(),
-                    new_word: en,
-                    to_ru: false,
-                    original_word: ru,
-                });
-            } else if layout::hkl_is_english(active_lang)
-                && en.chars().all(|c| c.is_ascii_alphabetic())
-            {
-                return Some(SwitchAction {
-                    backspaces: self.len(),
-                    new_word: ru,
-                    to_ru: true,
-                    original_word: en,
-                });
-            }
-            return None;
-        }
+        let score_en = bigrams::score_en(&en_lower);
+        let score_ru = bigrams::score_ru(&ru_lower);
 
         if layout::hkl_is_russian(active_lang) {
             // User typed with RU layout — all chars must be Cyrillic.
@@ -159,21 +239,24 @@ impl WordBuffer {
             // Propose switching to EN only when EN is significantly more plausible.
             if score_en - score_ru > bigrams::THRESHOLD_PER_BIGRAM {
                 return Some(SwitchAction {
-                    backspaces: self.len(),
+                    backspaces: len,
                     new_word: en,
                     to_ru: false,
                     original_word: ru,
                 });
             }
         } else if layout::hkl_is_english(active_lang) {
-            // User typed with EN layout — all chars must be ASCII letters.
-            if !en.chars().all(|c| c.is_ascii_alphabetic()) {
+            // The RU interpretation must be fully Cyrillic to be a plausible Russian word.
+            // We do NOT guard on EN chars being all-alphabetic: Russian letters like
+            // 'ж','б','х','ъ','ю' map to OEM punctuation keys (';',',','[',']','.') in EN
+            // layout, so a valid Russian word typed in EN layout will contain non-alpha chars.
+            if !ru.chars().all(is_cyrillic) {
                 return None;
             }
             // Propose switching to RU only when RU is significantly more plausible.
             if score_ru - score_en > bigrams::THRESHOLD_PER_BIGRAM {
                 return Some(SwitchAction {
-                    backspaces: self.len(),
+                    backspaces: len,
                     new_word: ru,
                     to_ru: true,
                     original_word: en,
@@ -250,9 +333,10 @@ mod tests {
     // ── Minimum-length guard ─────────────────────────────────────────────────
 
     #[test]
-    fn single_char_auto_detect_returns_none() {
+    fn short_word_auto_detect_returns_none() {
         let mut buf = WordBuffer::new();
-        buf.push(0x48, false); // 'h'
+        // 3-char word — below the min_len=4 threshold for auto-detection
+        push_en_word(&mut buf, "abc");
         assert!(buf.detect_mismatch(LANG_RU).is_none());
         assert!(buf.detect_mismatch(LANG_EN).is_none());
     }
@@ -328,6 +412,60 @@ mod tests {
             buf.detect_mismatch(LANG_RU).is_none(),
             "should NOT switch a real Russian word typed in RU layout"
         );
+    }
+
+    #[test]
+    fn eto_typed_in_en_layout_switches_to_ru() {
+        let mut buf = WordBuffer::new();
+        buf.push(0xDE, false); // '\'' -> 'э'
+        buf.push(0x4E, false); // 'n' -> 'т'
+        buf.push(0x4A, false); // 'j' -> 'о'
+        let action = buf.detect_mismatch(LANG_EN).expect("should switch 'это' from EN to RU");
+        assert!(action.to_ru);
+        assert_eq!(action.new_word, "это");
+    }
+
+    #[test]
+    fn eto_capital_typed_in_en_layout_switches_to_ru() {
+        let mut buf = WordBuffer::new();
+        buf.push(0xDE, true); // '\'' -> 'Э'
+        buf.push(0x4E, false); // 'n' -> 'т'
+        buf.push(0x4A, false); // 'j' -> 'о'
+        let action = buf.detect_mismatch(LANG_EN).expect("should switch 'Это' from EN to RU");
+        assert!(action.to_ru);
+        assert_eq!(action.new_word, "Это");
+    }
+
+    #[test]
+    fn chto_typed_in_en_layout_switches_to_ru() {
+        let mut buf = WordBuffer::new();
+        buf.push(0x58, false); // 'x' -> 'ч'
+        buf.push(0x4E, false); // 'n' -> 'т'
+        buf.push(0x4A, false); // 'j' -> 'о'
+        let action = buf.detect_mismatch(LANG_EN).expect("should switch 'что' from EN to RU");
+        assert!(action.to_ru);
+        assert_eq!(action.new_word, "что");
+    }
+
+    #[test]
+    fn test_dictionary_sorting() {
+        for window in COMMON_RU_SHORT.windows(2) {
+            assert!(window[0] < window[1], "COMMON_RU_SHORT not sorted: {} >= {}", window[0], window[1]);
+        }
+        for window in COMMON_EN_SHORT.windows(2) {
+            assert!(window[0] < window[1], "COMMON_EN_SHORT not sorted: {} >= {}", window[0], window[1]);
+        }
+        assert!(COMMON_RU_SHORT.binary_search(&"это").is_ok(), "это should be found");
+        assert!(COMMON_RU_SHORT.binary_search(&"что").is_ok(), "что should be found");
+    }
+
+    #[test]
+    fn short_common_word_typed_correctly_does_not_switch() {
+        let mut buf = WordBuffer::new();
+        buf.push(0x54, false); // 't'
+        buf.push(0x48, false); // 'h'
+        buf.push(0x45, false); // 'e'
+        assert!(buf.detect_mismatch(LANG_EN).is_none());
     }
 
     // ── Case preservation ─────────────────────────────────────────────────────

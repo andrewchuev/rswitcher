@@ -87,8 +87,9 @@ fn exe_name_for_hwnd(hwnd: HWND) -> Option<String> {
             return None;
         }
 
-        let full_path = String::from_utf16_lossy(&buf[..size as usize]);
+        let safe_size = (size as usize).min(buf.len());
+        let full_path = String::from_utf16_lossy(&buf[..safe_size]);
         // Extract just "notepad.exe" from the full path.
-        full_path.split('\\').last().map(|s| s.to_lowercase())
+        full_path.split('\\').next_back().map(|s| s.to_lowercase())
     }
 }

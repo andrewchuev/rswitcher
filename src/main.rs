@@ -23,8 +23,8 @@ use windows::Win32::{
     System::LibraryLoader::GetModuleHandleW,
     UI::{
         Input::KeyboardAndMouse::{
-            GetKeyboardLayout, GetKeyState, VIRTUAL_KEY, VK_BACK, VK_CAPITAL, VK_RETURN,
-            VK_SHIFT, VK_SPACE, VK_TAB,
+            GetKeyboardLayout, GetKeyState, VIRTUAL_KEY, VK_BACK, VK_CAPITAL, VK_LWIN,
+            VK_RETURN, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB,
         },
         WindowsAndMessaging::{
             CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW,
@@ -266,8 +266,8 @@ unsafe extern "system" fn hook_proc(
                     .filter(|name| s.exceptions.iter().any(|e| e == name))
             };
             let excluded = excluded_name.is_some();
-            let hotkey = s.hotkey_enabled.then_some(VIRTUAL_KEY(s.hotkey_vk));
-            let undo_hotkey = s.undo_hotkey_enabled.then_some(VIRTUAL_KEY(s.undo_hotkey_vk));
+            let hotkey = s.hotkey_enabled.then_some((VIRTUAL_KEY(s.hotkey_vk), s.hotkey_win));
+            let undo_hotkey = s.undo_hotkey_enabled.then_some((VIRTUAL_KEY(s.undo_hotkey_vk), s.undo_hotkey_win));
             (s.enabled, excluded, excluded_name, hotkey, undo_hotkey)
         })
         .unwrap_or((false, false, None, None, None));
@@ -311,15 +311,41 @@ unsafe fn foreground_lang() -> u16 {
     (hkl.0 as usize) as u16
 }
 
+/// Returns true if `vk` is a modifier key (Win, Shift, Ctrl, Alt).
+/// Modifier key presses must not clear the word buffer — they may be the first
+/// half of a hotkey combo (e.g. Win key down before Shift fires Win+Shift).
+fn is_modifier_vk(vk: u16) -> bool {
+    matches!(vk,
+        0x5B | 0x5C           // VK_LWIN, VK_RWIN
+        | 0x10 | 0xA0 | 0xA1 // VK_SHIFT, VK_LSHIFT, VK_RSHIFT
+        | 0x11 | 0xA2 | 0xA3 // VK_CONTROL, VK_LCONTROL, VK_RCONTROL
+        | 0x12 | 0xA4 | 0xA5 // VK_MENU, VK_LMENU, VK_RMENU
+    )
+}
+
+/// Match an actual low-level VK code against a configured (possibly logical) VK.
+/// VK_SHIFT (0x10) matches both VK_LSHIFT (0xA0) and VK_RSHIFT (0xA1).
+fn vk_matches(actual: u16, configured: u16) -> bool {
+    match configured {
+        0x10 => matches!(actual, 0xA0 | 0xA1), // VK_SHIFT → either shift
+        0x11 => matches!(actual, 0xA2 | 0xA3), // VK_CONTROL → either ctrl
+        0x12 => matches!(actual, 0xA4 | 0xA5), // VK_MENU → either alt
+        _ => actual == configured,
+    }
+}
+
 unsafe fn process_key(
     vk: VIRTUAL_KEY,
     buf: &mut buffer::WordBuffer,
-    hotkey: Option<VIRTUAL_KEY>,
-    undo_hotkey: Option<VIRTUAL_KEY>,
+    hotkey: Option<(VIRTUAL_KEY, bool)>,
+    undo_hotkey: Option<(VIRTUAL_KEY, bool)>,
 ) -> bool {
+    let win_held = GetKeyState(VK_LWIN.0 as i32) < 0
+        || GetKeyState(VK_RWIN.0 as i32) < 0;
+
     // ── Undo last switch ─────────────────────────────────────────────────────
-    if let Some(uh) = undo_hotkey {
-        if vk == uh {
+    if let Some((uh_vk, uh_win)) = undo_hotkey {
+        if vk_matches(vk.0, uh_vk.0) && win_held == uh_win {
             let state = UNDO.with(|u| u.borrow_mut().take());
             if let Some(s) = state {
                 log!(
@@ -337,13 +363,17 @@ unsafe fn process_key(
                 log!("[UNDO] hotkey pressed but no undo state available");
             }
             buf.clear();
+            if uh_win {
+                // Suppress Start menu: Win was held but we swallowed the key.
+                switcher::suppress_start_menu();
+            }
             return true;
         }
     }
 
     // ── Force switch hotkey ──────────────────────────────────────────────────
-    if let Some(hk) = hotkey {
-        if vk == hk {
+    if let Some((hk_vk, hk_win)) = hotkey {
+        if vk_matches(vk.0, hk_vk.0) && win_held == hk_win {
             let lang = foreground_lang();
             let snap = buf.detection_snapshot();
             if let Some(action) = buf.force_switch(lang) {
@@ -361,6 +391,10 @@ unsafe fn process_key(
             } else {
                 log!("[FORCE] lang={:#06x} buf_len={} → no action (untranslatable or wrong layout)", lang, buf.len());
                 buf.clear();
+            }
+            if hk_win {
+                // Suppress Start menu: Win was held but we swallowed the key.
+                switcher::suppress_start_menu();
             }
             UNDO.with(|u| u.borrow_mut().take());
             return true;
@@ -416,6 +450,9 @@ unsafe fn process_key(
                 let caps = GetKeyState(VK_CAPITAL.0 as i32) & 1 != 0;
                 buf.push(vk.0, shift ^ caps);
                 UNDO.with(|u| *u.borrow_mut() = None);
+            } else if is_modifier_vk(vk.0) {
+                // Modifier key (Win/Shift/Ctrl/Alt) — keep the buffer intact so
+                // the user can follow with a hotkey combo without clearing state.
             } else {
                 // Non-translatable key = word boundary (dash, bracket, digit, …).
                 let lang = foreground_lang();
@@ -664,7 +701,7 @@ impl eframe::App for RswitcherApp {
                     .show(ui, |ui| {
                         ui.checkbox(&mut s.hotkey_enabled, "Принудительное переключение");
                         ui.label("→");
-                        let name = vk_display_name(s.hotkey_vk);
+                        let name = vk_display_name(s.hotkey_vk, s.hotkey_win);
                         if s.hotkey_enabled {
                             ui.label(egui::RichText::new(name).monospace());
                         } else {
@@ -674,7 +711,7 @@ impl eframe::App for RswitcherApp {
 
                         ui.checkbox(&mut s.undo_hotkey_enabled, "Отмена последнего переключения");
                         ui.label("→");
-                        let name = vk_display_name(s.undo_hotkey_vk);
+                        let name = vk_display_name(s.undo_hotkey_vk, s.undo_hotkey_win);
                         if s.undo_hotkey_enabled {
                             ui.label(egui::RichText::new(name).monospace());
                         } else {
@@ -689,7 +726,7 @@ impl eframe::App for RswitcherApp {
             }
 
             ui.add_space(4.0);
-            ui.weak("Изменить клавишу: отредактируйте config.json (поля hotkey_vk / undo_hotkey_vk).");
+            ui.weak("Изменить клавишу: отредактируйте config.json (hotkey_vk, hotkey_win, undo_hotkey_vk, undo_hotkey_win).");
 
             ui.add_space(8.0);
             ui.separator();
@@ -716,18 +753,20 @@ impl eframe::App for RswitcherApp {
     }
 }
 
-fn vk_display_name(vk: u16) -> &'static str {
-    match vk {
+fn vk_display_name(vk: u16, win: bool) -> String {
+    let base = match vk {
+        0x10 | 0xA0 | 0xA1 => "Shift",
+        0x08 => "Backspace",
         0x13 => "Pause",
         0x91 => "Scroll Lock",
         0x14 => "Caps Lock",
-        0x92 => "Num Lock",
         0x7B => "F12",
         0x7A => "F11",
         0x79 => "F10",
         0x78 => "F9",
         _ => "Custom",
-    }
+    };
+    if win { format!("Win+{}", base) } else { base.to_string() }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -753,12 +792,12 @@ fn main() -> eframe::Result<()> {
             s.enabled,
             s.exceptions,
             if s.hotkey_enabled {
-                format!("{} ({:#04x})", vk_display_name(s.hotkey_vk), s.hotkey_vk)
+                format!("{} ({:#04x})", vk_display_name(s.hotkey_vk, s.hotkey_win), s.hotkey_vk)
             } else {
                 "off".into()
             },
             if s.undo_hotkey_enabled {
-                format!("{} ({:#04x})", vk_display_name(s.undo_hotkey_vk), s.undo_hotkey_vk)
+                format!("{} ({:#04x})", vk_display_name(s.undo_hotkey_vk, s.undo_hotkey_win), s.undo_hotkey_vk)
             } else {
                 "off".into()
             },

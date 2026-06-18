@@ -9,8 +9,8 @@ Automatically detects when text is typed in the wrong keyboard layout (EN↔RU) 
 ## Features
 
 - **Auto-switching** — detects mismatched layout at word boundaries (Space / Enter / Tab) using a bigram language model
-- **Force switch** — hotkey to manually convert the current word at any time (default: `Pause`)
-- **Undo** — hotkey to revert the last automatic or forced conversion (default: `Scroll Lock`)
+- **Force switch** — hotkey to manually convert the current word at any time (default: `Win+Shift`)
+- **Undo** — hotkey to revert the last automatic or forced conversion (default: `Win+Backspace`)
 - **Dynamic tray icon** — shows the active layout at a glance (`Ru` on dark-blue, `En` on dark-red)
 - **Exclusions** — per-process exceptions (e.g. skip switching inside terminal emulators)
 - **Autostart** — optional Windows Registry entry for launch at login
@@ -46,10 +46,10 @@ Run `rswitcher.exe`. The app hides to the system tray on startup.
 | Double-click tray icon | Open settings window |
 | Right-click → **Настройки** | Open settings window |
 | Right-click → **Выход** | Quit |
-| `Pause` (while typing) | Force-convert the current word |
-| `Scroll Lock` (after a switch) | Undo the last conversion |
+| `Win+Shift` (while typing) | Force-convert the current word |
+| `Win+Backspace` (after a switch) | Undo the last conversion |
 
-Hotkey virtual key codes can be changed by editing `%APPDATA%\rswitcher\config.json` directly.
+Hotkey virtual key codes can be changed by editing `%APPDATA%\rswitcher\config.json` directly (fields: `hotkey_vk`, `hotkey_win`, `undo_hotkey_vk`, `undo_hotkey_win`).
 
 ---
 
@@ -129,9 +129,11 @@ Settings are stored in `%APPDATA%\rswitcher\config.json`:
   "enabled": true,
   "exceptions": ["WindowsTerminal.exe", "Code.exe"],
   "hotkey_enabled": true,
-  "hotkey_vk": 19,
+  "hotkey_vk": 16,
+  "hotkey_win": true,
   "undo_hotkey_enabled": true,
-  "undo_hotkey_vk": 145
+  "undo_hotkey_vk": 8,
+  "undo_hotkey_win": true
 }
 ```
 
@@ -139,8 +141,10 @@ Settings are stored in `%APPDATA%\rswitcher\config.json`:
 |---|---|---|
 | `enabled` | `true` | Master on/off toggle |
 | `exceptions` | `[]` | Lowercase exe names to skip |
-| `hotkey_vk` | `19` (Pause) | Force-switch virtual key code |
-| `undo_hotkey_vk` | `145` (Scroll Lock) | Undo virtual key code |
+| `hotkey_vk` | `16` (Shift) | Force-switch virtual key code |
+| `hotkey_win` | `true` | Require Win modifier for force-switch |
+| `undo_hotkey_vk` | `8` (Backspace) | Undo virtual key code |
+| `undo_hotkey_win` | `true` | Require Win modifier for undo |
 
 ---
 
@@ -150,7 +154,7 @@ Each run creates a file `%APPDATA%\rswitcher\logs\rswitcher_<unix>_<pid>.log`. E
 
 ```
 [  0:00.000] === RSwitcher started (pid=1234) ===
-[  0:00.000] settings: enabled=true exceptions=[] hotkey=Pause (0x13)
+[  0:00.000] settings: enabled=true exceptions=[] hotkey=Win+Shift (0x10)
 [  0:00.000] bigrams: threshold=1.5 nat/bigram  (EN_BIGRAMS[676], RU_BIGRAMS[1024])
 [  1:29.846] [DETECT] lang=0x0409 en="ghbdtn" ru="привет" score_en=-7.29 score_ru=-5.21 diff=-2.08 → SWITCH_EN→RU boundary=0x20
 [  1:33.626] [DETECT] lang=0x0419 en="hello" ru="руддщ" score_en=-5.28 score_ru=-7.11 diff=+1.82 → SWITCH_RU→EN boundary=0x20

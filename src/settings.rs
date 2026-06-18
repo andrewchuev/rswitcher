@@ -11,18 +11,24 @@ pub struct Settings {
     pub exceptions: Vec<String>,
 
     /// Hotkey for forced (manual) layout switch of the current word.
-    /// Default: 0x13 = VK_PAUSE (Pause/Break).
+    /// Default: Win+Shift (0x10 = VK_SHIFT, hotkey_win = true).
     #[serde(default)]
     pub hotkey_enabled: bool,
     #[serde(default = "default_hotkey_vk")]
     pub hotkey_vk: u16,
+    /// Require Win modifier for the force-switch hotkey.
+    #[serde(default)]
+    pub hotkey_win: bool,
 
     /// Hotkey to undo the last automatic switch and restore the original word.
-    /// Default: 0x91 = VK_SCROLL (Scroll Lock).
+    /// Default: Win+Backspace (0x08 = VK_BACK, undo_hotkey_win = true).
     #[serde(default)]
     pub undo_hotkey_enabled: bool,
     #[serde(default = "default_undo_hotkey_vk")]
     pub undo_hotkey_vk: u16,
+    /// Require Win modifier for the undo hotkey.
+    #[serde(default)]
+    pub undo_hotkey_win: bool,
 }
 
 impl Default for Settings {
@@ -31,16 +37,18 @@ impl Default for Settings {
             enabled: true,
             exceptions: Vec::new(),
             hotkey_enabled: false,
-            hotkey_vk: 0x13,  // VK_PAUSE
+            hotkey_vk: 0x10,   // VK_SHIFT
+            hotkey_win: true,
             undo_hotkey_enabled: false,
-            undo_hotkey_vk: 0x91, // VK_SCROLL
+            undo_hotkey_vk: 0x08, // VK_BACK
+            undo_hotkey_win: true,
         }
     }
 }
 
 fn bool_true() -> bool { true }
-fn default_hotkey_vk() -> u16 { 0x13 }
-fn default_undo_hotkey_vk() -> u16 { 0x91 }
+fn default_hotkey_vk() -> u16 { 0x10 }
+fn default_undo_hotkey_vk() -> u16 { 0x08 }
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 

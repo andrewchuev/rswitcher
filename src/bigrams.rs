@@ -40,24 +40,35 @@ pub fn score_ru(word: &str) -> f32 {
 }
 
 pub(crate) fn score(word: &str, table: &[f32], base: u32, n: u32) -> f32 {
-    let chars: Vec<u32> = word
+    let chars: Vec<Option<u32>> = word
         .chars()
-        .filter_map(|c| {
-            let lc = c.to_lowercase().next()?;
-            // Normalise ё→е so it falls in the RU table range.
-            let lc = if lc == 'ё' { 'е' } else { lc };
-            let d = (lc as u32).checked_sub(base)?;
-            if d < n { Some(d) } else { None }
+        .map(|c| {
+            c.to_lowercase().next().and_then(|lc| {
+                // Normalise ё→е so it falls in the RU table range.
+                let lc = if lc == 'ё' { 'е' } else { lc };
+                let d = (lc as u32).checked_sub(base)?;
+                if d < n { Some(d) } else { None }
+            })
         })
         .collect();
 
-    if chars.len() < 2 {
+    // If there are less than 2 valid alphabetical characters, we don't have
+    // enough layout-specific bigram information, so return NEG_INFINITY.
+    let valid_count = chars.iter().filter(|c| c.is_some()).count();
+    if valid_count < 2 {
         return f32::NEG_INFINITY;
     }
 
+    let penalty_ln = -10.0f32; // Log-probability penalty for invalid bigrams
+
     let sum: f32 = chars
         .windows(2)
-        .map(|w| table[(w[0] * n + w[1]) as usize].ln())
+        .map(|w| {
+            match (w[0], w[1]) {
+                (Some(c1), Some(c2)) => table[(c1 * n + c2) as usize].ln(),
+                _ => penalty_ln,
+            }
+        })
         .sum();
 
     sum / (chars.len() - 1) as f32
@@ -176,5 +187,29 @@ mod tests {
     #[test]
     fn ru_model_returns_neg_infinity_for_latin() {
         assert_eq!(score_ru("hello"), f32::NEG_INFINITY);
+    }
+
+    #[test]
+    fn test_vverhu_does_not_false_switch() {
+        let ru = score_ru("вверху");
+        let en = score_en("ddth[e"); // "вверху" in EN layout
+        // en should NOT exceed ru + 1.5, preventing false switch
+        assert!(
+            en - ru <= THRESHOLD_PER_BIGRAM,
+            "score_en('ddth[e')={:.2} should NOT exceed score_ru('вверху')={:.2} by >{:.1}",
+            en, ru, THRESHOLD_PER_BIGRAM
+        );
+    }
+
+    #[test]
+    fn test_dvuh_does_not_false_switch() {
+        let ru = score_ru("двух");
+        let en = score_en("lde["); // "двух" in EN layout
+        // en should NOT exceed ru + 1.5, preventing false switch
+        assert!(
+            en - ru <= THRESHOLD_PER_BIGRAM,
+            "score_en('lde[')={:.2} should NOT exceed score_ru('двух')={:.2} by >{:.1}",
+            en, ru, THRESHOLD_PER_BIGRAM
+        );
     }
 }

@@ -34,6 +34,9 @@ thread_local! {
     static UNDO: RefCell<Option<UndoState>> = const { RefCell::new(None) };
 
     static LAST_HWND: RefCell<HWND> = RefCell::new(HWND::default());
+
+    static SUCCESS_COUNTS: RefCell<std::collections::HashMap<String, u32>> =
+        RefCell::new(std::collections::HashMap::new());
 }
 
 struct UndoState {
@@ -341,6 +344,58 @@ unsafe fn process_key(
             } else {
                 if !buf.is_empty() {
                     PREV_WORD_BUF.with(|p| *p.borrow_mut() = Some((buf.clone(), vk)));
+
+                    // Adaptive dictionary check:
+                    // If a word is successfully typed (no switch), we count it.
+                    // If it is typed 3 times, we automatically whitelist it.
+                    if let Some(ref s) = snap {
+                        let word_to_check = if layout::hkl_is_russian(lang) {
+                            if s.ru_word.chars().all(|c| c.is_alphabetic()) && s.ru_word.chars().count() >= 4 {
+                                Some((s.ru_word.clone(), buffer::RU_COMMON_WORDS.binary_search(&s.ru_word.as_str()).is_ok()))
+                            } else {
+                                None
+                            }
+                        } else if layout::hkl_is_ukrainian(lang) {
+                            if s.ua_word.chars().all(|c| c.is_alphabetic()) && s.ua_word.chars().count() >= 4 {
+                                Some((s.ua_word.clone(), buffer::UA_COMMON_WORDS.binary_search(&s.ua_word.as_str()).is_ok()))
+                            } else {
+                                None
+                            }
+                        } else if layout::hkl_is_english(lang) {
+                            if s.en_word.chars().all(|c| c.is_alphabetic()) && s.en_word.chars().count() >= 4 {
+                                Some((s.en_word.clone(), buffer::EN_COMMON_WORDS.binary_search(&s.en_word.as_str()).is_ok()))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                        if let Some((word, is_common)) = word_to_check {
+                            if !is_common {
+                                SUCCESS_COUNTS.with(|sc| {
+                                    let mut counts = sc.borrow_mut();
+                                    let entry = counts.entry(word.clone()).or_insert(0);
+                                    *entry += 1;
+                                    if *entry >= 3 {
+                                        if let Some(settings_arc) = SETTINGS.get() {
+                                            if let Ok(mut settings) = settings_arc.write() {
+                                                if !settings.ignored_words.contains(&word) {
+                                                    settings.ignored_words.push(word.clone());
+                                                    let settings_to_save = settings.clone();
+                                                    std::thread::spawn(move || {
+                                                        crate::settings::save(&settings_to_save);
+                                                    });
+                                                    log_info!("[ADAPTIVE] Added '{}' to ignored_words whitelist (typed 3 times)", word);
+                                                }
+                                            }
+                                        }
+                                        counts.remove(&word);
+                                    }
+                                });
+                            }
+                        }
+                    }
                 }
                 buf.clear();
                 UNDO.with(|u| *u.borrow_mut() = None);
@@ -360,6 +415,31 @@ unsafe fn process_key(
                     let caps = GetKeyState(VK_CAPITAL.0 as i32) & 1 != 0;
                     buf.push(vk.0, shift ^ caps);
                     UNDO.with(|u| *u.borrow_mut() = None);
+
+                    // On-the-fly layout detection check
+                    let lang = foreground_lang();
+                    if let Some(action) = buf.detect_mismatch_on_the_fly(lang, sensitivity) {
+                        let snap = buf.detection_snapshot();
+                        if let Some(ref s) = snap {
+                            let switch_direction = if action.target_lang == layout::LANG_EN_US {
+                                if layout::hkl_is_russian(lang) { "RU→EN" } else { "UA→EN" }
+                            } else if action.target_lang == layout::LANG_RU {
+                                "EN→RU"
+                            } else {
+                                "EN→UA"
+                            };
+                            log_info!(
+                                "[FLY-DETECT] lang={:#06x} en={:?} ru={:?} ua={:?} score_en={:.2} score_ru={:.2} score_ua={:.2} → SWITCH_{} (on-the-fly)",
+                                lang, s.en_word, s.ru_word, s.ua_word, s.score_en, s.score_ru, s.score_ua,
+                                switch_direction
+                            );
+                        }
+                        save_undo(&action, None, lang);
+                        buf.clear();
+                        PREV_WORD_BUF.with(|p| *p.borrow_mut() = None);
+                        switcher::perform_switch(&action, None);
+                        return true; // Suppress current key event
+                    }
                 }
             } else if is_modifier_vk(vk.0) {
                 // Keep buffer intact

@@ -26,6 +26,18 @@ fn generate_language_models() {
     });
     let ua_bigrams = build_bigram_table_mapped(&ua_text, 33, char_to_ua_index);
 
+    // 1b. Generate trigrams
+    let en_trigrams = build_trigram_table_mapped(&en_text, 26, |c| {
+        let d = (c as u32).checked_sub('a' as u32)? as usize;
+        if d < 26 { Some(d) } else { None }
+    });
+    let ru_trigrams = build_trigram_table_mapped(&ru_text, 32, |c| {
+        let lc = if c == 'ё' { 'е' } else { c };
+        let d = (lc as u32).checked_sub('а' as u32)? as usize;
+        if d < 32 { Some(d) } else { None }
+    });
+    let ua_trigrams = build_trigram_table_mapped(&ua_text, 33, char_to_ua_index);
+
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     
     let bigrams_path = std::path::Path::new(&out_dir).join("bigrams_gen.rs");
@@ -37,6 +49,12 @@ fn generate_language_models() {
     writeln!(f_bi, "pub static RU_BIGRAMS: [f32; {}] = {};", ru_bigrams.len(), fmt_f32_array(&ru_bigrams)).expect("write failed");
     writeln!(f_bi, "#[allow(clippy::excessive_precision)]").expect("write failed");
     writeln!(f_bi, "pub static UA_BIGRAMS: [f32; {}] = {};", ua_bigrams.len(), fmt_f32_array(&ua_bigrams)).expect("write failed");
+    writeln!(f_bi, "#[allow(clippy::excessive_precision)]").expect("write failed");
+    writeln!(f_bi, "pub static EN_TRIGRAMS: [f32; {}] = {};", en_trigrams.len(), fmt_f32_array(&en_trigrams)).expect("write failed");
+    writeln!(f_bi, "#[allow(clippy::excessive_precision)]").expect("write failed");
+    writeln!(f_bi, "pub static RU_TRIGRAMS: [f32; {}] = {};", ru_trigrams.len(), fmt_f32_array(&ru_trigrams)).expect("write failed");
+    writeln!(f_bi, "#[allow(clippy::excessive_precision)]").expect("write failed");
+    writeln!(f_bi, "pub static UA_TRIGRAMS: [f32; {}] = {};", ua_trigrams.len(), fmt_f32_array(&ua_trigrams)).expect("write failed");
 
     // 2. Generate common dictionaries
     let en_words = get_common_words_mapped(&en_text, |c| {
@@ -173,4 +191,23 @@ fn get_common_words_mapped(text: &str, char_map: impl Fn(char) -> Option<usize>)
 fn fmt_f32_array(v: &[f32]) -> String {
     let entries: Vec<String> = v.iter().map(|&x| format!("{:.10}f32", x)).collect();
     format!("[{}]", entries.join(", "))
+}
+
+fn build_trigram_table_mapped(text: &str, n: usize, char_map: impl Fn(char) -> Option<usize>) -> Vec<f32> {
+    let indices: Vec<usize> = text
+        .chars()
+        .filter_map(|c| {
+            let lc = c.to_lowercase().next()?;
+            char_map(lc)
+        })
+        .collect();
+
+    let mut counts = vec![0u32; n * n * n];
+    for w in indices.windows(3) {
+        counts[w[0] * n * n + w[1] * n + w[2]] += 1;
+    }
+
+    // Laplace (add-1) smoothing
+    let total: u64 = counts.iter().map(|&c| c as u64).sum::<u64>() + (n * n * n) as u64;
+    counts.iter().map(|&c| (c + 1) as f32 / total as f32).collect()
 }

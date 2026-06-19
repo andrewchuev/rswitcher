@@ -15,21 +15,21 @@ const RU_N: u32 = 32;
 
 // Public API ------------------------------------------------------------------
 
-/// Log-probability score of `word` under the English bigram model,
-/// normalised by the number of bigrams (word.len() - 1).
+/// Log-probability score of `word` under the English trigram model,
+/// normalised by the number of transitions (word.len() - 1).
 /// Returns `f32::NEG_INFINITY` for words shorter than 2 characters.
 pub fn score_en(word: &str) -> f32 {
-    score(word, &EN_BIGRAMS, EN_BASE, EN_N)
+    score(word, &EN_BIGRAMS, &EN_TRIGRAMS, EN_BASE, EN_N)
 }
 
-/// Log-probability score of `word` under the Russian bigram model.
+/// Log-probability score of `word` under the Russian trigram model.
 pub fn score_ru(word: &str) -> f32 {
-    score(word, &RU_BIGRAMS, RU_BASE, RU_N)
+    score(word, &RU_BIGRAMS, &RU_TRIGRAMS, RU_BASE, RU_N)
 }
 
-/// Log-probability score of `word` under the Ukrainian bigram model.
+/// Log-probability score of `word` under the Ukrainian trigram model.
 pub fn score_ua(word: &str) -> f32 {
-    score_mapped(word, &UA_BIGRAMS, 33, char_to_ua_index)
+    score_mapped(word, &UA_BIGRAMS, &UA_TRIGRAMS, 33, char_to_ua_index)
 }
 
 fn char_to_ua_index(c: char) -> Option<usize> {
@@ -71,7 +71,13 @@ fn char_to_ua_index(c: char) -> Option<usize> {
     }
 }
 
-pub(crate) fn score_mapped(word: &str, table: &[f32], n: usize, char_map: impl Fn(char) -> Option<usize>) -> f32 {
+pub(crate) fn score_mapped(
+    word: &str,
+    bi_table: &[f32],
+    tri_table: &[f32],
+    n: usize,
+    char_map: impl Fn(char) -> Option<usize>,
+) -> f32 {
     let chars: Vec<Option<usize>> = word
         .chars()
         .map(|c| {
@@ -85,21 +91,26 @@ pub(crate) fn score_mapped(word: &str, table: &[f32], n: usize, char_map: impl F
     }
 
     let penalty_ln = -10.0f32;
+    let mut sum = 0.0f32;
 
-    let sum: f32 = chars
-        .windows(2)
-        .map(|w| {
-            match (w[0], w[1]) {
-                (Some(c1), Some(c2)) => table[c1 * n + c2].ln(),
-                _ => penalty_ln,
-            }
-        })
-        .sum();
+    // First transition: Bigram
+    match (chars[0], chars[1]) {
+        (Some(c1), Some(c2)) => sum += bi_table[c1 * n + c2].ln(),
+        _ => sum += penalty_ln,
+    }
+
+    // Subsequent transitions: Trigram
+    for i in 2..chars.len() {
+        match (chars[i - 2], chars[i - 1], chars[i]) {
+            (Some(c1), Some(c2), Some(c3)) => sum += tri_table[c1 * n * n + c2 * n + c3].ln(),
+            _ => sum += penalty_ln,
+        }
+    }
 
     sum / (chars.len() - 1) as f32
 }
 
-pub(crate) fn score(word: &str, table: &[f32], base: u32, n: u32) -> f32 {
+pub(crate) fn score(word: &str, bi_table: &[f32], tri_table: &[f32], base: u32, n: u32) -> f32 {
     let chars: Vec<Option<u32>> = word
         .chars()
         .map(|c| {
@@ -112,24 +123,30 @@ pub(crate) fn score(word: &str, table: &[f32], base: u32, n: u32) -> f32 {
         })
         .collect();
 
-    // If there are less than 2 valid alphabetical characters, we don't have
-    // enough layout-specific bigram information, so return NEG_INFINITY.
     let valid_count = chars.iter().filter(|c| c.is_some()).count();
     if valid_count < 2 {
         return f32::NEG_INFINITY;
     }
 
-    let penalty_ln = -10.0f32; // Log-probability penalty for invalid bigrams
+    let penalty_ln = -10.0f32; // Log-probability penalty for invalid transitions
+    let mut sum = 0.0f32;
 
-    let sum: f32 = chars
-        .windows(2)
-        .map(|w| {
-            match (w[0], w[1]) {
-                (Some(c1), Some(c2)) => table[(c1 * n + c2) as usize].ln(),
-                _ => penalty_ln,
+    // First transition: Bigram
+    match (chars[0], chars[1]) {
+        (Some(c1), Some(c2)) => sum += bi_table[(c1 * n + c2) as usize].ln(),
+        _ => sum += penalty_ln,
+    }
+
+    // Subsequent transitions: Trigram
+    for i in 2..chars.len() {
+        match (chars[i - 2], chars[i - 1], chars[i]) {
+            (Some(c1), Some(c2), Some(c3)) => {
+                let idx = (c1 * n * n + c2 * n + c3) as usize;
+                sum += tri_table[idx].ln();
             }
-        })
-        .sum();
+            _ => sum += penalty_ln,
+        }
+    }
 
     sum / (chars.len() - 1) as f32
 }

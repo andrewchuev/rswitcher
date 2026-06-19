@@ -435,7 +435,7 @@ unsafe fn process_key(
                             );
                         }
                         save_undo(&action, None, lang);
-                        buf.clear();
+                        buf.has_switched = true;
                         PREV_WORD_BUF.with(|p| *p.borrow_mut() = None);
                         switcher::perform_switch(&action, None);
                         return true; // Suppress current key event

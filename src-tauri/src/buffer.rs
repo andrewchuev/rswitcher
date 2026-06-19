@@ -94,6 +94,7 @@ pub fn switching_threshold(len: usize) -> f32 {
 #[derive(Debug, Default, Clone)]
 pub struct WordBuffer {
     entries: Vec<Entry>,
+    pub has_switched: bool,
 }
 
 impl WordBuffer {
@@ -111,6 +112,7 @@ impl WordBuffer {
     }
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.has_switched = false;
     }
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
@@ -258,6 +260,9 @@ impl WordBuffer {
     }
 
     fn detect_impl_opt(&self, active_lang: u16, sensitivity: f32, on_the_fly: bool) -> Option<SwitchAction> {
+        if self.has_switched {
+            return None;
+        }
         let len = self.entries.len();
         let backspaces = if on_the_fly { len - 1 } else { len };
 

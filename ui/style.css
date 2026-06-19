@@ -121,10 +121,8 @@ body {
 }
 
 .card-exclusions {
-  flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 200px;
 }
 
 .card-header {
@@ -152,8 +150,7 @@ body {
 
 /* ── Scrollable Exclusions List ───────────────────────────────────────────── */
 .exclusions-list-container {
-  flex: 1;
-  min-height: 75px;
+  height: 110px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
   background-color: var(--bg-input);
@@ -614,5 +611,61 @@ input:checked + .slider:before {
 .card-dev-exclusions {
   display: flex;
   flex-direction: column;
-  min-height: 150px;
+}
+
+/* ── Tabs Layout & Buttons ───────────────────────────────────────────────── */
+.tabs-nav {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 12px;
+  padding-left: 2px;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  padding: 8px 16px 10px 16px;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  position: relative;
+  transition: color 0.2s ease;
+  outline: none;
+}
+
+.tab-btn:hover {
+  color: var(--text-primary);
+}
+
+.tab-btn.active {
+  color: var(--accent-color);
+}
+
+.tab-btn::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background-color: var(--accent-color);
+  transform: scaleX(0);
+  transition: transform 0.2s ease;
+}
+
+.tab-btn.active::after {
+  transform: scaleX(1);
+}
+
+.tab-content {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tab-content.active {
+  display: flex;
 }

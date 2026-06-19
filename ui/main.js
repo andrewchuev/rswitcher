@@ -68,7 +68,10 @@ const translations = {
     ignoredWordsTitle: "Ignored Words",
     ignoredWordsSubtitle: "words whitelisted by the Undo hotkey",
     clearIgnoredBtn: "Clear Whitelist",
-    ignoredEmpty: "whitelist is empty"
+    ignoredEmpty: "whitelist is empty",
+    tabGeneral: "General",
+    tabHotkeys: "Hotkeys",
+    tabExclusions: "Exceptions"
   },
   ru: {
     title: "RSwitcher — Настройки",
@@ -104,7 +107,10 @@ const translations = {
     ignoredWordsTitle: "Исключенные слова",
     ignoredWordsSubtitle: "слова, добавленные в белый список через Отмену",
     clearIgnoredBtn: "Очистить список",
-    ignoredEmpty: "список пуст"
+    ignoredEmpty: "список пуст",
+    tabGeneral: "Основные",
+    tabHotkeys: "Горячие клавиши",
+    tabExclusions: "Исключения"
   },
   uk: {
     title: "RSwitcher — Налаштування",
@@ -140,7 +146,10 @@ const translations = {
     ignoredWordsTitle: "Виключені слова",
     ignoredWordsSubtitle: "слова, додані до білого списку через Скасування",
     clearIgnoredBtn: "Очистити список",
-    ignoredEmpty: "список порожній"
+    ignoredEmpty: "список порожній",
+    tabGeneral: "Основні",
+    tabHotkeys: "Гарячі клавіші",
+    tabExclusions: "Винятки"
   }
 };
 
@@ -810,6 +819,17 @@ openConfigBtn.addEventListener('click', async () => {
 document.addEventListener('DOMContentLoaded', () => {
   loadAllData();
   
+  // Tabs Navigation switching logic
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tabName = btn.getAttribute('data-tab');
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      document.getElementById(`tab-${tabName}`).classList.add('active');
+    });
+  });
+
   // Poll running apps list only when the window has focus to save CPU/battery
   if (document.hasFocus()) {
     startPolling();

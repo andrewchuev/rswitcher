@@ -26,156 +26,172 @@
 
     <div class="divider"></div>
 
+    <!-- Tabs Navigation -->
+    <nav class="tabs-nav">
+      <button class="tab-btn active" data-tab="general" data-i18n="tabGeneral">General</button>
+      <button class="tab-btn" data-tab="hotkeys" data-i18n="tabHotkeys">Hotkeys</button>
+      <button class="tab-btn" data-tab="exclusions" data-i18n="tabExclusions">Exceptions</button>
+    </nav>
+
     <!-- Main Content Area -->
     <main class="app-content">
-      <!-- Exclusions Group -->
-      <section class="card card-exclusions">
-        <div class="card-header">
-          <h2 data-i18n="exclusionsTitle">Exclusions (processes)</h2>
-          <span class="subtitle" data-i18n="exclusionsSubtitle">do not switch layout in these windows</span>
-        </div>
-        
-        <div class="exclusions-list-container">
-          <ul id="exclusions-list" class="exclusions-list">
-            <!-- List elements injected dynamically via JavaScript -->
-          </ul>
-        </div>
-
-        <div class="grid-form">
-          <div class="form-row">
-            <span class="row-label" data-i18n="manualLabel">Manual:</span>
-            <div class="input-group">
-              <input type="text" id="manual-input" placeholder="app.exe" data-i18n-placeholder="manualPlaceholder" autocomplete="off">
-              <button id="add-btn" class="btn" data-i18n="addButton">Add</button>
+      <!-- General Tab -->
+      <div class="tab-content active" id="tab-general">
+        <!-- System Group -->
+        <section class="card">
+          <div class="card-header">
+            <h2 data-i18n="systemTitle">System</h2>
+          </div>
+          <div class="system-layout">
+            <label class="checkbox-row">
+              <input type="checkbox" id="autostart-toggle">
+              <span class="checkbox-box"></span>
+              <span class="checkbox-text" data-i18n="autostartLabel">Start on Windows startup</span>
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="selection-replace-toggle">
+              <span class="checkbox-box"></span>
+              <span class="checkbox-text" data-i18n="selectionReplaceLabel">Use Ctrl+Shift+Left for word deletion</span>
+            </label>
+            <div class="lang-row">
+              <span class="row-label" data-i18n="langLabel">Language:</span>
+              <div class="select-container lang-select-container">
+                <select id="lang-select">
+                  <option value="en">English</option>
+                  <option value="ru">Русский</option>
+                  <option value="uk">Українська</option>
+                </select>
+              </div>
+            </div>
+            <div class="lang-row">
+              <span class="row-label" data-i18n="sensitivityLabel">Sensitivity:</span>
+              <div class="select-container sensitivity-select-container">
+                <select id="sensitivity-select">
+                  <option value="0.6" data-i18n="sensitivityLow">Low</option>
+                  <option value="1.0" data-i18n="sensitivityMedium">Medium</option>
+                  <option value="1.4" data-i18n="sensitivityHigh">High</option>
+                </select>
+              </div>
             </div>
           </div>
-          <div class="form-row">
-            <span class="row-label" data-i18n="runningLabel">Running:</span>
-            <div class="select-container">
-              <select id="running-apps-select">
-                <option value="" disabled selected data-i18n="runningSelectPlaceholder">Select running...</option>
-                <!-- Options injected dynamically via JavaScript -->
-              </select>
+        </section>
+      </div>
+
+      <!-- Hotkeys Tab -->
+      <div class="tab-content" id="tab-hotkeys">
+        <!-- Hotkeys Group -->
+        <section class="card">
+          <div class="card-header">
+            <h2 data-i18n="hotkeysTitle">Hotkeys</h2>
+          </div>
+          
+          <div class="hotkeys-grid">
+            <label class="checkbox-row">
+              <input type="checkbox" id="hotkey-toggle">
+              <span class="checkbox-box"></span>
+              <span class="checkbox-text" data-i18n="hotkeyForceLabel">Force switch</span>
+            </label>
+            <div class="keycap-container">
+              <kbd id="hotkey-display" class="keycap">Win+Shift</kbd>
+            </div>
+
+            <label class="checkbox-row">
+              <input type="checkbox" id="undo-hotkey-toggle">
+              <span class="checkbox-box"></span>
+              <span class="checkbox-text" data-i18n="hotkeyUndoLabel">Undo last switch</span>
+            </label>
+            <div class="keycap-container">
+              <kbd id="undo-hotkey-display" class="keycap">Win+Backspace</kbd>
             </div>
           </div>
-        </div>
-      </section>
+          <div class="card-footer-info" id="hotkeys-footer" data-i18n="hotkeysFooter">
+            Click the key combination to change it.
+          </div>
+        </section>
+      </div>
 
-      <!-- Development Applications Group -->
-      <section class="card card-dev-exclusions">
-        <div class="card-header">
-          <h2 data-i18n="devExclusionsTitle">Development Apps</h2>
-          <span class="subtitle" data-i18n="devExclusionsSubtitle">low sensitivity + min length 5 in these windows</span>
-        </div>
-        
-        <div class="exclusions-list-container">
-          <ul id="dev-exclusions-list" class="exclusions-list">
-            <!-- List elements injected dynamically via JavaScript -->
-          </ul>
-        </div>
+      <!-- Exceptions Tab -->
+      <div class="tab-content" id="tab-exclusions">
+        <!-- Exclusions Group -->
+        <section class="card card-exclusions">
+          <div class="card-header">
+            <h2 data-i18n="exclusionsTitle">Exclusions (processes)</h2>
+            <span class="subtitle" data-i18n="exclusionsSubtitle">do not switch layout in these windows</span>
+          </div>
+          
+          <div class="exclusions-list-container">
+            <ul id="exclusions-list" class="exclusions-list">
+              <!-- List elements injected dynamically via JavaScript -->
+            </ul>
+          </div>
 
-        <div class="grid-form">
-          <div class="form-row">
-            <span class="row-label" data-i18n="manualLabel">Manual:</span>
-            <div class="input-group">
-              <input type="text" id="dev-manual-input" placeholder="app.exe" data-i18n-placeholder="manualPlaceholder" autocomplete="off">
-              <button id="dev-add-btn" class="btn" data-i18n="addButton">Add</button>
+          <div class="grid-form">
+            <div class="form-row">
+              <span class="row-label" data-i18n="manualLabel">Manual:</span>
+              <div class="input-group">
+                <input type="text" id="manual-input" placeholder="app.exe" data-i18n-placeholder="manualPlaceholder" autocomplete="off">
+                <button id="add-btn" class="btn" data-i18n="addButton">Add</button>
+              </div>
+            </div>
+            <div class="form-row">
+              <span class="row-label" data-i18n="runningLabel">Running:</span>
+              <div class="select-container">
+                <select id="running-apps-select">
+                  <option value="" disabled selected data-i18n="runningSelectPlaceholder">Select running...</option>
+                  <!-- Options injected dynamically via JavaScript -->
+                </select>
+              </div>
             </div>
           </div>
-          <div class="form-row">
-            <span class="row-label" data-i18n="runningLabel">Running:</span>
-            <div class="select-container">
-              <select id="dev-running-apps-select">
-                <option value="" disabled selected data-i18n="runningSelectPlaceholder">Select running...</option>
-                <!-- Options injected dynamically via JavaScript -->
-              </select>
+        </section>
+
+        <!-- Development Applications Group -->
+        <section class="card card-dev-exclusions">
+          <div class="card-header">
+            <h2 data-i18n="devExclusionsTitle">Development Apps</h2>
+            <span class="subtitle" data-i18n="devExclusionsSubtitle">low sensitivity + min length 5 in these windows</span>
+          </div>
+          
+          <div class="exclusions-list-container">
+            <ul id="dev-exclusions-list" class="exclusions-list">
+              <!-- List elements injected dynamically via JavaScript -->
+            </ul>
+          </div>
+
+          <div class="grid-form">
+            <div class="form-row">
+              <span class="row-label" data-i18n="manualLabel">Manual:</span>
+              <div class="input-group">
+                <input type="text" id="dev-manual-input" placeholder="app.exe" data-i18n-placeholder="manualPlaceholder" autocomplete="off">
+                <button id="dev-add-btn" class="btn" data-i18n="addButton">Add</button>
+              </div>
+            </div>
+            <div class="form-row">
+              <span class="row-label" data-i18n="runningLabel">Running:</span>
+              <div class="select-container">
+                <select id="dev-running-apps-select">
+                  <option value="" disabled selected data-i18n="runningSelectPlaceholder">Select running...</option>
+                  <!-- Options injected dynamically via JavaScript -->
+                </select>
+              </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <!-- Ignored Words Group -->
-      <section class="card">
-        <div class="card-header">
-          <h2 data-i18n="ignoredWordsTitle">Ignored Words</h2>
-          <span class="subtitle" data-i18n="ignoredWordsSubtitle">words whitelisted by the Undo hotkey</span>
-        </div>
-        <div class="ignored-words-container">
-          <div id="ignored-words-list" class="ignored-tags">
-            <!-- Ignored word tags injected dynamically -->
+        <!-- Ignored Words Group -->
+        <section class="card">
+          <div class="card-header">
+            <h2 data-i18n="ignoredWordsTitle">Ignored Words</h2>
+            <span class="subtitle" data-i18n="ignoredWordsSubtitle">words whitelisted by the Undo hotkey</span>
           </div>
-          <button id="clear-ignored-btn" class="btn btn-secondary" data-i18n="clearIgnoredBtn">Clear Whitelist</button>
-        </div>
-      </section>
-
-      <!-- Hotkeys Group -->
-      <section class="card">
-        <div class="card-header">
-          <h2 data-i18n="hotkeysTitle">Hotkeys</h2>
-        </div>
-        
-        <div class="hotkeys-grid">
-          <label class="checkbox-row">
-            <input type="checkbox" id="hotkey-toggle">
-            <span class="checkbox-box"></span>
-            <span class="checkbox-text" data-i18n="hotkeyForceLabel">Force switch</span>
-          </label>
-          <div class="keycap-container">
-            <kbd id="hotkey-display" class="keycap">Win+Shift</kbd>
-          </div>
-
-          <label class="checkbox-row">
-            <input type="checkbox" id="undo-hotkey-toggle">
-            <span class="checkbox-box"></span>
-            <span class="checkbox-text" data-i18n="hotkeyUndoLabel">Undo last switch</span>
-          </label>
-          <div class="keycap-container">
-            <kbd id="undo-hotkey-display" class="keycap">Win+Backspace</kbd>
-          </div>
-        </div>
-        <div class="card-footer-info" id="hotkeys-footer" data-i18n="hotkeysFooter">
-          Click the key combination to change it.
-        </div>
-      </section>
-
-      <!-- System Group -->
-      <section class="card">
-        <div class="card-header">
-          <h2 data-i18n="systemTitle">System</h2>
-        </div>
-        <div class="system-layout">
-          <label class="checkbox-row">
-            <input type="checkbox" id="autostart-toggle">
-            <span class="checkbox-box"></span>
-            <span class="checkbox-text" data-i18n="autostartLabel">Start on Windows startup</span>
-          </label>
-          <label class="checkbox-row">
-            <input type="checkbox" id="selection-replace-toggle">
-            <span class="checkbox-box"></span>
-            <span class="checkbox-text" data-i18n="selectionReplaceLabel">Use Ctrl+Shift+Left for word deletion</span>
-          </label>
-          <div class="lang-row">
-            <span class="row-label" data-i18n="langLabel">Language:</span>
-            <div class="select-container lang-select-container">
-              <select id="lang-select">
-                <option value="en">English</option>
-                <option value="ru">Русский</option>
-                <option value="uk">Українська</option>
-              </select>
+          <div class="ignored-words-container">
+            <div id="ignored-words-list" class="ignored-tags">
+              <!-- Ignored word tags injected dynamically -->
             </div>
+            <button id="clear-ignored-btn" class="btn btn-secondary" data-i18n="clearIgnoredBtn">Clear Whitelist</button>
           </div>
-          <div class="lang-row">
-            <span class="row-label" data-i18n="sensitivityLabel">Sensitivity:</span>
-            <div class="select-container sensitivity-select-container">
-              <select id="sensitivity-select">
-                <option value="0.6" data-i18n="sensitivityLow">Low</option>
-                <option value="1.0" data-i18n="sensitivityMedium">Medium</option>
-                <option value="1.4" data-i18n="sensitivityHigh">High</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      </section>
+        </section>
+      </div>
     </main>
 
     <div class="divider"></div>

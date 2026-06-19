@@ -165,6 +165,15 @@ fn is_modifier_vk(vk: u16) -> bool {
     )
 }
 
+fn is_navigation_vk(vk: u16) -> bool {
+    matches!(vk,
+        0x21 | 0x22           // VK_PRIOR (Page Up), VK_NEXT (Page Down)
+        | 0x23 | 0x24         // VK_END, VK_HOME
+        | 0x25 | 0x26 | 0x27 | 0x28 // VK_LEFT, VK_UP, VK_RIGHT, VK_DOWN
+        | 0x2D | 0x2E         // VK_INSERT, VK_DELETE
+    )
+}
+
 unsafe fn key_is_held(configured: u16) -> bool {
     let held = |vk: i32| GetAsyncKeyState(vk) < 0;
     match configured {
@@ -456,6 +465,13 @@ unsafe fn process_key(
                 }
             } else if is_modifier_vk(vk.0) {
                 // Keep buffer intact
+            } else if is_navigation_vk(vk.0) {
+                // Cursor-positioning keys (arrows, End, Home, Page Up/Down,
+                // Insert, Delete) move the caret but do not end a word — clear
+                // the buffer without running layout detection so the next word
+                // starts fresh.
+                buf.clear();
+                UNDO.with(|u| *u.borrow_mut() = None);
             } else {
                 let lang = foreground_lang();
                 let snap = buf.detection_snapshot();

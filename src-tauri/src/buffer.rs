@@ -77,6 +77,13 @@ pub struct DetectionSnapshot {
     pub len: usize,
 }
 
+/// Minimum score advantage UA must have over RU to be chosen when the word is
+/// spelled identically in both languages.  The UA corpus is ~10× larger than
+/// the RU corpus, which causes UA bigram scores to be systematically 0.1–0.2
+/// higher for shared Slavic vocabulary.  A delta below this threshold is
+/// treated as a tie and resolved in favour of RU.
+const RU_UA_SCORE_MIN_DELTA: f32 = 0.3;
+
 pub fn switching_threshold(len: usize) -> f32 {
     if len <= 4 {
         1.5
@@ -469,7 +476,16 @@ impl WordBuffer {
                         if is_common_ru && is_common_ua {
                             let score_ru = bigrams::score_ru(&ru_lower);
                             let score_ua = bigrams::score_ua(&ua_lower);
-                            if score_ru >= score_ua {
+                            // Identical spelling in both languages: the UA corpus is
+                            // larger, making UA scores systematically ~0.1–0.2 higher
+                            // for shared vocabulary.  Require a meaningful delta before
+                            // choosing UA; otherwise default to RU.
+                            let prefer_ru = if ru_lower == ua_lower {
+                                score_ua - score_ru < RU_UA_SCORE_MIN_DELTA
+                            } else {
+                                score_ru >= score_ua
+                            };
+                            if prefer_ru {
                                 let new_word = apply_case_correction(&self.entries, &ru);
                                 return Some(SwitchAction {
                                     backspaces,
@@ -655,6 +671,10 @@ impl WordBuffer {
                     true
                 } else if ua_in_dict && !ru_in_dict {
                     false
+                } else if ru_lower == ua_lower {
+                    // Same spelling in both: prefer RU unless UA has a meaningful
+                    // score advantage (guards against corpus-size bias).
+                    score_ua - score_ru < RU_UA_SCORE_MIN_DELTA
                 } else {
                     score_ru >= score_ua
                 };

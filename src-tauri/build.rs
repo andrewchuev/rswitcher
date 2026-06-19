@@ -61,11 +61,22 @@ fn generate_language_models() {
         let d = (c as u32).checked_sub('a' as u32)? as usize;
         if d < 26 { Some(d) } else { None }
     });
-    let ru_words = get_common_words_mapped(&ru_text, |c| {
+    let mut ru_words = get_common_words_mapped(&ru_text, |c| {
         let lc = if c == 'ё' { 'е' } else { c };
         let d = (lc as u32).checked_sub('а' as u32)? as usize;
         if d < 32 { Some(d) } else { None }
     });
+    // Guarantee that high-frequency everyday words are always dictionary-protected
+    // even when the corpus has too few examples to rank them in the top 3000.
+    for w in &[
+        "давай", "иногда", "куда", "нужно", "сейчас", "сюда",
+        "теперь", "тогда", "туда",
+    ] {
+        if !ru_words.contains(&w.to_string()) {
+            ru_words.push(w.to_string());
+        }
+    }
+    ru_words.sort();
     let ua_words = get_common_words_mapped(&ua_text, char_to_ua_index);
 
     let dict_path = std::path::Path::new(&out_dir).join("dictionaries_gen.rs");

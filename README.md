@@ -1,20 +1,20 @@
 # RSwitcher
 
-A lightweight [Punto Switcher](https://yandex.ru/soft/punto/) alternative for Windows 11, written in Rust.
+A lightweight, modern, and automatic keyboard-layout switcher for Windows 10 & 11, built using Rust and Tauri v2.
 
-Automatically detects when text is typed in the wrong keyboard layout (EN↔RU) and fixes it in-place — no full-screen popups, no cloud sync, no telemetry. Lives quietly in the system tray.
+Automatically detects when text is typed in the wrong keyboard layout (EN↔RU) and fixes it in-place — no full-screen popups, no cloud sync, no telemetry. It runs quietly in the system tray and features a premium dark-themed settings panel.
 
 ---
 
 ## Features
 
-- **Auto-switching** — detects mismatched layout at word boundaries (Space / Enter / Tab) using a bigram language model
-- **Force switch** — hotkey to manually convert the current word at any time (default: `Win+Shift`)
-- **Undo** — hotkey to revert the last automatic or forced conversion (default: `Win+Backspace`)
-- **Dynamic tray icon** — shows the active layout at a glance (`Ru` on dark-blue, `En` on dark-red)
-- **Exclusions** — per-process exceptions (e.g. skip switching inside terminal emulators)
-- **Autostart** — optional Windows Registry entry for launch at login
-- **Structured log** — per-session log file in `%APPDATA%\rswitcher\logs\` for debugging, auto-rotated after 7 days
+- **Auto-switching** — detects mismatched layout at word boundaries (Space / Enter / Tab) using a bigram language model.
+- **Force switch** — hotkey to manually convert the current word at any time (default: `Win+Shift`).
+- **Undo** — hotkey to revert the last automatic or forced conversion (default: `Win+Backspace`).
+- **Dynamic tray icon** — shows the active layout flag at a glance (`Ru` or `En`), dimmed when in an excluded application.
+- **Exclusions** — per-process exceptions (e.g. skip switching inside terminal emulators or code editors).
+- **Autostart** — optional Windows Registry entry to automatically launch RSwitcher at login.
+- **Structured log** — per-session log file in `%APPDATA%\rswitcher\logs\` for debugging, auto-rotated after 7 days.
 
 ---
 
@@ -25,21 +25,31 @@ Automatically detects when text is typed in the wrong keyboard layout (EN↔RU) 
 
 ---
 
-## Build
+## Build & Development
 
+RSwitcher uses **Tauri v2** to render its premium user interface. The build process embeds the HTML/CSS/JS frontend files directly inside a single compiled Rust binary.
+
+### Development Mode
+To run the application in development mode with hot-reloading:
+```bash
+npx tauri dev
 ```
-cargo build --release
+
+### Production Build
+To build the optimized release binary and installer bundles:
+```bash
+npx tauri build
 ```
+* The compiled standalone executable is saved to `target/release/rswitcher.exe`.
+* Installation bundles (`.msi` and `.exe` setup installers) are generated in `target/release/bundle/`.
 
-The release binary is in `target/release/rswitcher.exe`. No installer required — copy anywhere and run.
-
-**Build dependencies**: Rust 1.70+, MSVC toolchain (for `windows` crate and `winresource`).
+**Build dependencies**: Rust 1.80+ (with MSVC toolchain), Node.js (for `npx tauri` CLI, though no node_modules are required for run-time execution).
 
 ---
 
 ## Usage
 
-Run `rswitcher.exe`. The app hides to the system tray on startup.
+Run `rswitcher.exe`. The application hides to the system tray on startup.
 
 | Action | Result |
 |---|---|
@@ -49,7 +59,7 @@ Run `rswitcher.exe`. The app hides to the system tray on startup.
 | `Win+Shift` (while typing) | Force-convert the current word |
 | `Win+Backspace` (after a switch) | Undo the last conversion |
 
-Hotkey virtual key codes can be changed by editing `%APPDATA%\rswitcher\config.json` directly (fields: `hotkey_vk`, `hotkey_win`, `undo_hotkey_vk`, `undo_hotkey_win`).
+Hotkey virtual key codes can be customized by editing `%APPDATA%\rswitcher\config.json` directly (fields: `hotkey_vk`, `hotkey_win`, `undo_hotkey_vk`, `undo_hotkey_win`).
 
 ---
 
@@ -57,28 +67,39 @@ Hotkey virtual key codes can be changed by editing `%APPDATA%\rswitcher\config.j
 
 ```
 rswitcher
-├── build.rs              — compile-time bigram table generator
+├── Cargo.toml            — root workspace configuration
 ├── corpus/
 │   ├── en.txt            — English training corpus (~700 words)
 │   └── ru.txt            — Russian training corpus (~700 words)
-└── src/
-    ├── main.rs           — entry point, hook installation, eframe app, tray watcher
-    ├── buffer.rs         — WordBuffer: VK-code accumulation + mismatch detection
-    ├── bigrams.rs        — bigram scoring (includes generated tables from OUT_DIR)
-    ├── layout.rs         — EN↔RU VK-code / character mapping, HKL language detection
-    ├── switcher.rs       — SendInput sequences: backspace + re-inject + layout change
-    ├── settings.rs       — Settings struct, JSON load/save
-    ├── logger.rs         — per-launch log file with elapsed timestamps
-    ├── exceptions.rs     — foreground process name cache for exclusion checks
-    └── autostart.rs      — Windows Registry autostart entry
+├── ui/                   — frontend web assets (HTML/CSS/JS)
+│   ├── index.html        — settings panel layout
+│   ├── style.css         — glassmorphic style design
+│   └── main.js           — IPC backend integration scripts
+└── src-tauri/            — Rust application backend
+    ├── Cargo.toml        — backend dependencies & features
+    ├── build.rs          — bigram generator & resource compiler
+    ├── tauri.conf.json   — Tauri application configuration
+    ├── capabilities/
+    │   └── default.json  — window API permissions manifest
+    └── src/
+        ├── main.rs       — backend entry point, tray icon builder, IPC commands
+        ├── buffer.rs     — WordBuffer: VK-code accumulation & mismatch detection
+        ├── bigrams.rs    — bigram scoring (includes generated tables from OUT_DIR)
+        ├── layout.rs     — EN↔RU VK-code / character mapping, HKL language detection
+        ├── switcher.rs   — SendInput sequences: backspace + re-inject + layout change
+        ├── settings.rs   — Settings struct, JSON load/save persistence
+        ├── logger.rs     — per-launch log file with elapsed timestamps
+        ├── exceptions.rs — process name cache for exclusion checks
+        └── autostart.rs  — Windows Registry autostart entry helper
 ```
 
 ### Thread model
 
 ```
-main thread (eframe / egui)
-│   • Runs the settings UI at ~10 Hz when window is visible
-│   • Updates tray icon language on each frame
+main thread (Tauri v2 / WebView2 runtime)
+│   • Runs the system event loop
+│   • Displays the HTML/CSS settings UI inside Edge WebView2 when requested
+│   • Listens to frontend requests via Tauri IPC Commands
 │
 ├── rswitcher-hook  (Win32 message loop)
 │   • Installs WH_KEYBOARD_LL global keyboard hook
@@ -86,11 +107,9 @@ main thread (eframe / egui)
 │   • Owns WORD_BUF and UNDO thread-locals
 │   • Calls switcher::perform_switch() → SendInput
 │
-└── rswitcher-tray  (background poller, 100 ms sleep)
-    • Drains MenuEvent and TrayIconEvent channels
-    • Quit → std::process::exit(0)  (instant, no eframe round-trip)
-    • Show → sets SHOW_WINDOW atomic + ctx.request_repaint()
-    • Periodic ctx.request_repaint() keeps eframe alive when window is hidden
+└── rswitcher-tray  (background language watcher, 100 ms sleep)
+    • Polls the foreground window's HKL layout state
+    • Calls tray.set_icon() to dynamically update tray flags
 ```
 
 ### Switching algorithm
@@ -110,14 +129,6 @@ main thread (eframe / egui)
 6. **Execute** — `switcher::perform_switch` sends the required `Backspace` keystrokes, re-injects the corrected word as `KEYEVENTF_UNICODE` events, then posts `WM_INPUTLANGCHANGEREQUEST` to switch the active layout.
 7. **Undo** — before switching, the original word and erase length are saved in a thread-local `UndoState`; the undo hotkey replays the inverse action.
 
-### Injection guard
-
-All `SendInput` events are tagged with a synthetic scan code. The hook checks `LLKHF_INJECTED` on every event and skips its own injected keystrokes, preventing infinite re-processing.
-
-### Language detection
-
-`foreground_lang()` reads the keyboard layout handle (`HKL`) of the thread that owns the foreground window via `GetKeyboardLayout(GetWindowThreadProcessId(GetForegroundWindow()))`. The low 16 bits of the HKL encode the Windows LANGID; the primary language ID (low 10 bits, mask `0x3FF`) is compared against `PRIMARY_EN = 0x0009` and `PRIMARY_RU = 0x0019`, which covers all regional English and Russian variants.
-
 ---
 
 ## Configuration
@@ -127,11 +138,11 @@ Settings are stored in `%APPDATA%\rswitcher\config.json`:
 ```json
 {
   "enabled": true,
-  "exceptions": ["WindowsTerminal.exe", "Code.exe"],
+  "exceptions": ["windowsterminal.exe", "code.exe"],
   "hotkey_enabled": true,
   "hotkey_vk": 16,
   "hotkey_win": true,
-  "undo_hotkey_enabled": true,
+  "undo_hotkey_toggle": true,
   "undo_hotkey_vk": 8,
   "undo_hotkey_win": true
 }

@@ -97,14 +97,14 @@ fn find_hkl(lang_id: u16) -> Option<HKL> {
     }
 }
 
-/// Inject a harmless keystroke (VK_F15) to prevent Windows from opening the
-/// Start menu after we swallow a Win+X combo without injecting any other key.
+/// Inject a harmless, unassigned virtual key (0xE8) to prevent Windows from
+/// opening the Start menu after we swallow a Win+X combo.
 ///
 /// Windows suppresses the Start menu if any key event is observed between the
 /// Win key-down and Win key-up.  When our hotkey fires and the action produces
 /// no injection (empty buffer), we call this to satisfy that condition.
 pub fn suppress_start_menu() {
-    let vk = VIRTUAL_KEY(0x7E); // VK_F15 — no default binding in any app
+    let vk = VIRTUAL_KEY(0xE8); // vkE8 — unassigned virtual key code
     let inputs = [
         make_vk(vk, KEYBD_EVENT_FLAGS(0)),
         make_vk(vk, KEYEVENTF_KEYUP),

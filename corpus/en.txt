@@ -198,3 +198,5 @@ varies greatly between different dialects and geographical regions across the wo
 borrowed from many other languages is extremely extensive and diverse across all domains. Writing
 and speaking skills improve substantially with regular practice maintained consistently over years.
 Reading widely exposes you to different styles and registers of both written and spoken language.
+
+Web development involves webp images, png formats, html, css, json, api, vps servers, git, npm, cli commands, dev server, yaml, xml, uuid, ipv4, ipv6, tcp, udp, ssl, tls, http, ssh, link, hash, sign, user, pass, test, code, file, path, read, open, save, load, send, dump, diff, term, exec.

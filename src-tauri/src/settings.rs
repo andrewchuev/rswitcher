@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default = "bool_true")]
     pub enabled: bool,
@@ -29,6 +29,16 @@ pub struct Settings {
     /// Require Win modifier for the undo hotkey.
     #[serde(default)]
     pub undo_hotkey_win: bool,
+    #[serde(default = "default_lang")]
+    pub lang: String,
+    #[serde(default)]
+    pub window_x: Option<i32>,
+    #[serde(default)]
+    pub window_y: Option<i32>,
+    #[serde(default)]
+    pub window_width: Option<u32>,
+    #[serde(default)]
+    pub window_height: Option<u32>,
 }
 
 impl Default for Settings {
@@ -42,6 +52,11 @@ impl Default for Settings {
             undo_hotkey_enabled: false,
             undo_hotkey_vk: 0x08, // VK_BACK
             undo_hotkey_win: true,
+            lang: "en".to_string(),
+            window_x: None,
+            window_y: None,
+            window_width: None,
+            window_height: None,
         }
     }
 }
@@ -49,6 +64,7 @@ impl Default for Settings {
 fn bool_true() -> bool { true }
 fn default_hotkey_vk() -> u16 { 0x10 }
 fn default_undo_hotkey_vk() -> u16 { 0x08 }
+fn default_lang() -> String { "en".to_string() }
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 

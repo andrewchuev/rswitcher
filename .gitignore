@@ -1,2 +1,5 @@
-/target/
+**/target/
 .idea/
+*.log
+.DS_Store
+clippy*.txt

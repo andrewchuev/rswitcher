@@ -23,6 +23,7 @@ const RU_N: u32 = 32;
 //   pair for the word to be considered "typed in the wrong layout".
 //
 // Increase this value to reduce false positives; decrease to catch more cases.
+#[allow(dead_code)]
 pub const THRESHOLD_PER_BIGRAM: f32 = 1.5;
 
 // Public API ------------------------------------------------------------------

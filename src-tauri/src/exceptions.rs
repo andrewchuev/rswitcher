@@ -17,6 +17,7 @@ use windows::Win32::{
 // Running-process enumeration (for the exceptions picker)
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[derive(serde::Serialize, Clone)]
 pub struct RunningApp {
     pub exe:   String,
     pub title: String,

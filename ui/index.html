@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="title">RSwitcher — Settings</title>
+  <!-- Outfit and Inter Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <h1 class="logo">RSwitcher</h1>
+      <div class="toggle-container">
+        <span class="toggle-label" data-i18n="masterLabel">Auto-switching</span>
+        <label class="switch">
+          <input type="checkbox" id="master-switch">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </header>
+
+    <div class="divider"></div>
+
+    <!-- Main Content Area -->
+    <main class="app-content">
+      <!-- Exclusions Group -->
+      <section class="card card-exclusions">
+        <div class="card-header">
+          <h2 data-i18n="exclusionsTitle">Exclusions (processes)</h2>
+          <span class="subtitle" data-i18n="exclusionsSubtitle">do not switch layout in these windows</span>
+        </div>
+        
+        <div class="exclusions-list-container">
+          <ul id="exclusions-list" class="exclusions-list">
+            <!-- List elements injected dynamically via JavaScript -->
+          </ul>
+        </div>
+
+        <div class="grid-form">
+          <div class="form-row">
+            <span class="row-label" data-i18n="manualLabel">Manual:</span>
+            <div class="input-group">
+              <input type="text" id="manual-input" placeholder="app.exe" data-i18n-placeholder="manualPlaceholder" autocomplete="off">
+              <button id="add-btn" class="btn" data-i18n="addButton">Add</button>
+            </div>
+          </div>
+          <div class="form-row">
+            <span class="row-label" data-i18n="runningLabel">Running:</span>
+            <div class="select-container">
+              <select id="running-apps-select">
+                <option value="" disabled selected data-i18n="runningSelectPlaceholder">Select running...</option>
+                <!-- Options injected dynamically via JavaScript -->
+              </select>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Hotkeys Group -->
+      <section class="card">
+        <div class="card-header">
+          <h2 data-i18n="hotkeysTitle">Hotkeys</h2>
+        </div>
+        
+        <div class="hotkeys-grid">
+          <label class="checkbox-row">
+            <input type="checkbox" id="hotkey-toggle">
+            <span class="checkbox-box"></span>
+            <span class="checkbox-text" data-i18n="hotkeyForceLabel">Force switch</span>
+          </label>
+          <div class="keycap-container">
+            <kbd id="hotkey-display" class="keycap">Win+Shift</kbd>
+          </div>
+
+          <label class="checkbox-row">
+            <input type="checkbox" id="undo-hotkey-toggle">
+            <span class="checkbox-box"></span>
+            <span class="checkbox-text" data-i18n="hotkeyUndoLabel">Undo last switch</span>
+          </label>
+          <div class="keycap-container">
+            <kbd id="undo-hotkey-display" class="keycap">Win+Backspace</kbd>
+          </div>
+        </div>
+        <div class="card-footer-info" id="hotkeys-footer" data-i18n="hotkeysFooter">
+          Click the key combination to change it.
+        </div>
+      </section>
+
+      <!-- System Group -->
+      <section class="card">
+        <div class="card-header">
+          <h2 data-i18n="systemTitle">System</h2>
+        </div>
+        <div class="system-layout">
+          <label class="checkbox-row">
+            <input type="checkbox" id="autostart-toggle">
+            <span class="checkbox-box"></span>
+            <span class="checkbox-text" data-i18n="autostartLabel">Start on Windows startup</span>
+          </label>
+          <div class="lang-row">
+            <span class="row-label" data-i18n="langLabel">Language:</span>
+            <div class="select-container lang-select-container">
+              <select id="lang-select">
+                <option value="en">English</option>
+                <option value="ru">Русский</option>
+                <option value="uk">Українська</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="divider"></div>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <span class="footer-note" data-i18n="footerNote">Settings are saved automatically.</span>
+      <button id="open-config-btn" class="btn btn-secondary" data-i18n="openConfigBtn">Open Config</button>
+    </footer>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>

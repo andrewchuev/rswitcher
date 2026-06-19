@@ -84,9 +84,26 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 8px 0;
-  /* Proportional vertical distribution */
-  justify-content: space-between;
+  padding: 8px 6px 8px 0;
+  overflow-y: auto;
+}
+
+/* Custom scrollbar for app-content */
+.app-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.app-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.app-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.app-content::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-color);
 }
 
 .card {
@@ -546,4 +563,56 @@ input:checked + .slider:before {
 .footer-note {
   font-size: 11px;
   color: var(--text-secondary);
+}
+
+/* ── Ignored Words Tags ───────────────────────────────────────────────────── */
+.ignored-words-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ignored-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 80px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background-color: var(--bg-input);
+  padding: 6px;
+  min-height: 40px;
+}
+
+.ignored-tag {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background-color: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+.ignored-tag .remove-tag-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 9px;
+  padding: 0 2px;
+}
+
+.ignored-tag .remove-tag-btn:hover {
+  color: #ef4444;
+}
+
+.card-dev-exclusions {
+  display: flex;
+  flex-direction: column;
+  min-height: 150px;
 }

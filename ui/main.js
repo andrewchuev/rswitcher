@@ -16,6 +16,15 @@ const langSelect = document.getElementById('lang-select');
 const sensitivitySelect = document.getElementById('sensitivity-select');
 const openConfigBtn = document.getElementById('open-config-btn');
 
+// New settings elements
+const selectionReplaceToggle = document.getElementById('selection-replace-toggle');
+const devExclusionsList = document.getElementById('dev-exclusions-list');
+const devManualInput = document.getElementById('dev-manual-input');
+const devAddBtn = document.getElementById('dev-add-btn');
+const devRunningAppsSelect = document.getElementById('dev-running-apps-select');
+const ignoredWordsList = document.getElementById('ignored-words-list');
+const clearIgnoredBtn = document.getElementById('clear-ignored-btn');
+
 // Local cached state
 let settings = null;
 let runningApps = [];
@@ -51,7 +60,15 @@ const translations = {
     sensitivityLabel: "Sensitivity:",
     sensitivityLow: "Low",
     sensitivityMedium: "Medium",
-    sensitivityHigh: "High"
+    sensitivityHigh: "High",
+    selectionReplaceLabel: "Use Ctrl+Shift+Left for word deletion",
+    devExclusionsTitle: "Development Apps",
+    devExclusionsSubtitle: "low sensitivity + min length 5 in these windows",
+    devExclusionsEmpty: "development apps list is empty",
+    ignoredWordsTitle: "Ignored Words",
+    ignoredWordsSubtitle: "words whitelisted by the Undo hotkey",
+    clearIgnoredBtn: "Clear Whitelist",
+    ignoredEmpty: "whitelist is empty"
   },
   ru: {
     title: "RSwitcher — Настройки",
@@ -79,7 +96,15 @@ const translations = {
     sensitivityLabel: "Чувствительность:",
     sensitivityLow: "Низкая",
     sensitivityMedium: "Средняя",
-    sensitivityHigh: "Высокая"
+    sensitivityHigh: "Высокая",
+    selectionReplaceLabel: "Выделять слово через Ctrl+Shift+Left при замене",
+    devExclusionsTitle: "Среды разработки и терминалы",
+    devExclusionsSubtitle: "пониженная чувствительность и мин. длина 5 в этих окнах",
+    devExclusionsEmpty: "список сред разработки пуст",
+    ignoredWordsTitle: "Исключенные слова",
+    ignoredWordsSubtitle: "слова, добавленные в белый список через Отмену",
+    clearIgnoredBtn: "Очистить список",
+    ignoredEmpty: "список пуст"
   },
   uk: {
     title: "RSwitcher — Налаштування",
@@ -98,7 +123,7 @@ const translations = {
     hotkeysFooter: "Натисніть на комбінацію клавіш, щоб змінити її.",
     pressKeys: "Натисніть клавіші...",
     systemTitle: "Система",
-    autostartLabel: "Запускати разом з Windows",
+    autostartLabel: "Запускать разом з Windows",
     langLabel: "Мова:",
     footerNote: "Налаштування зберігаються автоматично.",
     openConfigBtn: "Відкрити конфіг",
@@ -107,7 +132,15 @@ const translations = {
     sensitivityLabel: "Чутливість:",
     sensitivityLow: "Низька",
     sensitivityMedium: "Середня",
-    sensitivityHigh: "Висока"
+    sensitivityHigh: "Висока",
+    selectionReplaceLabel: "Виділяти слово через Ctrl+Shift+Left при заміні",
+    devExclusionsTitle: "Середовища розробки та термінали",
+    devExclusionsSubtitle: "знижена чутливість та мін. довжина 5 в цих вікнах",
+    devExclusionsEmpty: "список середовищ розробки порожній",
+    ignoredWordsTitle: "Виключені слова",
+    ignoredWordsSubtitle: "слова, додані до білого списку через Скасування",
+    clearIgnoredBtn: "Очистити список",
+    ignoredEmpty: "список порожній"
   }
 };
 
@@ -263,6 +296,63 @@ function renderUI() {
       stopRecording(false);
     }
   }
+
+  // Selection replacement checkbox
+  selectionReplaceToggle.checked = settings.use_selection_replace;
+
+  // Render dev exclusions list
+  devExclusionsList.innerHTML = '';
+  if (settings.dev_exceptions.length === 0) {
+    const emptyState = document.createElement('div');
+    emptyState.className = 'list-empty-state';
+    emptyState.textContent = dict.devExclusionsEmpty;
+    devExclusionsList.appendChild(emptyState);
+  } else {
+    settings.dev_exceptions.forEach((exc, index) => {
+      const li = document.createElement('li');
+      
+      const bullet = document.createElement('span');
+      bullet.className = 'bullet';
+      bullet.textContent = '•';
+      
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'app-name';
+      nameSpan.textContent = exc;
+      
+      const delBtn = document.createElement('button');
+      delBtn.className = 'delete-btn';
+      delBtn.textContent = '✕';
+      delBtn.addEventListener('click', () => deleteDevException(index));
+      
+      li.appendChild(bullet);
+      li.appendChild(nameSpan);
+      li.appendChild(delBtn);
+      devExclusionsList.appendChild(li);
+    });
+  }
+
+  // Render ignored words whitelist as pill tags
+  ignoredWordsList.innerHTML = '';
+  if (settings.ignored_words.length === 0) {
+    const emptyState = document.createElement('div');
+    emptyState.className = 'list-empty-state';
+    emptyState.textContent = dict.ignoredEmpty;
+    ignoredWordsList.appendChild(emptyState);
+  } else {
+    settings.ignored_words.forEach((word, index) => {
+      const tag = document.createElement('span');
+      tag.className = 'ignored-tag';
+      tag.textContent = word + ' ';
+      
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'remove-tag-btn';
+      removeBtn.textContent = '✕';
+      removeBtn.addEventListener('click', () => removeIgnoredWord(index));
+      
+      tag.appendChild(removeBtn);
+      ignoredWordsList.appendChild(tag);
+    });
+  }
 }
 
 // ── Render Running Apps select dropdown ─────────────────────────────────────
@@ -271,12 +361,18 @@ function renderRunningApps() {
   
   // Keep the first option
   runningAppsSelect.innerHTML = `<option value="" disabled selected>${dict.runningSelectPlaceholder}</option>`;
+  devRunningAppsSelect.innerHTML = `<option value="" disabled selected>${dict.runningSelectPlaceholder}</option>`;
   
   if (runningApps.length === 0) {
-    const opt = document.createElement('option');
-    opt.disabled = true;
-    opt.textContent = dict.noRunningApps;
-    runningAppsSelect.appendChild(opt);
+    const opt1 = document.createElement('option');
+    opt1.disabled = true;
+    opt1.textContent = dict.noRunningApps;
+    runningAppsSelect.appendChild(opt1);
+
+    const opt2 = document.createElement('option');
+    opt2.disabled = true;
+    opt2.textContent = dict.noRunningApps;
+    devRunningAppsSelect.appendChild(opt2);
   } else {
     runningApps.forEach(app => {
       const alreadyAdded = settings && settings.exceptions.includes(app.exe.toLowerCase());
@@ -285,6 +381,13 @@ function renderRunningApps() {
       opt.textContent = alreadyAdded ? `${app.exe}${dict.alreadyAddedSuffix}` : app.exe;
       opt.disabled = alreadyAdded;
       runningAppsSelect.appendChild(opt);
+
+      const alreadyAddedDev = settings && settings.dev_exceptions.includes(app.exe.toLowerCase());
+      const optDev = document.createElement('option');
+      optDev.value = app.exe;
+      optDev.textContent = alreadyAddedDev ? `${app.exe}${dict.alreadyAddedSuffix}` : app.exe;
+      optDev.disabled = alreadyAddedDev;
+      devRunningAppsSelect.appendChild(optDev);
     });
   }
 }
@@ -472,6 +575,61 @@ async function deleteException(index) {
   }
 }
 
+async function addManualDevException() {
+  const value = devManualInput.value.trim().toLowerCase();
+  if (!value) return;
+  if (!settings) return;
+  if (!settings.dev_exceptions.includes(value)) {
+    settings.dev_exceptions.push(value);
+    try {
+      const saved = await invoke('save_settings', { settings });
+      if (saved) settings = saved;
+      devManualInput.value = '';
+      renderUI();
+      renderRunningApps();
+    } catch (err) {
+      console.error("Failed to add dev exception:", err);
+    }
+  }
+}
+
+async function deleteDevException(index) {
+  if (!settings) return;
+  settings.dev_exceptions.splice(index, 1);
+  try {
+    const saved = await invoke('save_settings', { settings });
+    if (saved) settings = saved;
+    renderUI();
+    renderRunningApps();
+  } catch (err) {
+    console.error("Failed to delete dev exception:", err);
+  }
+}
+
+async function removeIgnoredWord(index) {
+  if (!settings) return;
+  settings.ignored_words.splice(index, 1);
+  try {
+    const saved = await invoke('save_settings', { settings });
+    if (saved) settings = saved;
+    renderUI();
+  } catch (err) {
+    console.error("Failed to remove ignored word:", err);
+  }
+}
+
+async function clearIgnoredWords() {
+  if (!settings) return;
+  settings.ignored_words = [];
+  try {
+    const saved = await invoke('save_settings', { settings });
+    if (saved) settings = saved;
+    renderUI();
+  } catch (err) {
+    console.error("Failed to clear ignored words:", err);
+  }
+}
+
 // ── Event Listeners ─────────────────────────────────────────────────────────
 
 // Master Switch
@@ -567,6 +725,49 @@ sensitivitySelect.addEventListener('change', async () => {
   }
 });
 
+// Selection replace toggle listener
+selectionReplaceToggle.addEventListener('change', async () => {
+  if (!settings) return;
+  settings.use_selection_replace = selectionReplaceToggle.checked;
+  try {
+    const saved = await invoke('save_settings', { settings });
+    if (saved) settings = saved;
+    renderUI();
+  } catch (err) {
+    console.error("Failed to save selection replace settings:", err);
+  }
+});
+
+// Development Exceptions listeners
+devAddBtn.addEventListener('click', addManualDevException);
+devManualInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    addManualDevException();
+  }
+});
+
+devRunningAppsSelect.addEventListener('change', async () => {
+  const selectedApp = devRunningAppsSelect.value;
+  if (!selectedApp) return;
+  if (!settings) return;
+  const value = selectedApp.toLowerCase();
+  if (!settings.dev_exceptions.includes(value)) {
+    settings.dev_exceptions.push(value);
+    try {
+      const saved = await invoke('save_settings', { settings });
+      if (saved) settings = saved;
+      devRunningAppsSelect.value = '';
+      renderUI();
+      renderRunningApps();
+    } catch (err) {
+      console.error("Failed to add selected app to dev exceptions:", err);
+    }
+  }
+});
+
+// Whitelist clear listener
+clearIgnoredBtn.addEventListener('click', clearIgnoredWords);
+
 // Keycap Clicks (Interactive Recording)
 hotkeyDisplay.addEventListener('click', () => {
   if (settings && settings.hotkey_enabled) {
@@ -618,4 +819,5 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Refresh immediately when the dropdown gains focus
   runningAppsSelect.addEventListener('focus', refreshRunningApps);
+  devRunningAppsSelect.addEventListener('focus', refreshRunningApps);
 });

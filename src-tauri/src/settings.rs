@@ -36,6 +36,15 @@ pub struct Settings {
     pub sensitivity: f32,
 
     #[serde(default)]
+    pub ignored_words: Vec<String>,
+
+    #[serde(default = "default_dev_exceptions")]
+    pub dev_exceptions: Vec<String>,
+
+    #[serde(default = "default_use_selection_replace")]
+    pub use_selection_replace: bool,
+
+    #[serde(default)]
     pub window_x: Option<i32>,
     #[serde(default)]
     pub window_y: Option<i32>,
@@ -58,6 +67,9 @@ impl Default for Settings {
             undo_hotkey_win: true,
             lang: "en".to_string(),
             sensitivity: 1.0,
+            ignored_words: Vec::new(),
+            dev_exceptions: default_dev_exceptions(),
+            use_selection_replace: false,
             window_x: None,
             window_y: None,
             window_width: None,
@@ -71,6 +83,26 @@ fn default_hotkey_vk() -> u16 { 0x10 }
 fn default_undo_hotkey_vk() -> u16 { 0x08 }
 fn default_lang() -> String { "en".to_string() }
 fn default_sensitivity() -> f32 { 1.0 }
+fn default_use_selection_replace() -> bool { false }
+fn default_dev_exceptions() -> Vec<String> {
+    vec![
+        "code.exe".to_string(),
+        "idea64.exe".to_string(),
+        "rustrover64.exe".to_string(),
+        "clion64.exe".to_string(),
+        "rider64.exe".to_string(),
+        "pycharm64.exe".to_string(),
+        "webstorm64.exe".to_string(),
+        "devenv.exe".to_string(),
+        "sublime_text.exe".to_string(),
+        "notepad++.exe".to_string(),
+        "wt.exe".to_string(),
+        "cmd.exe".to_string(),
+        "powershell.exe".to_string(),
+        "bash.exe".to_string(),
+        "wsl.exe".to_string(),
+    ]
+}
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 

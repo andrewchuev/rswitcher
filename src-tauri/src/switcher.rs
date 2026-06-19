@@ -7,7 +7,7 @@ use windows::Win32::{
             GetKeyboardLayoutList, SendInput, HKL,
             INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
             KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
-            VIRTUAL_KEY, VK_BACK,
+            VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_SHIFT, VK_LEFT,
         },
         WindowsAndMessaging::{
             GetForegroundWindow, PostMessageW, WM_INPUTLANGCHANGEREQUEST,
@@ -34,14 +34,33 @@ use crate::layout::{LANG_EN_US, LANG_RU};
 /// `LLKHF_INJECTED` in their hook-proc flags, so our hook_proc will skip them
 /// (preventing infinite recursion).
 pub fn perform_switch(action: &SwitchAction, boundary_vk: Option<VIRTUAL_KEY>) {
-    let mut inputs: Vec<INPUT> = Vec::with_capacity(
-        action.backspaces * 2 + action.new_word.len() * 2 + 2,
-    );
+    let use_selection = crate::globals::SETTINGS
+        .get()
+        .and_then(|s| s.try_read().ok())
+        .map(|s| s.use_selection_replace)
+        .unwrap_or(false);
+
+    let mut inputs: Vec<INPUT> = Vec::new();
 
     // ── 1. Erase ─────────────────────────────────────────────────────────────
-    for _ in 0..action.backspaces {
-        inputs.push(make_vk(VK_BACK, KEYBD_EVENT_FLAGS(0)));
-        inputs.push(make_vk(VK_BACK, KEYEVENTF_KEYUP));
+    if action.backspaces > 0 {
+        if use_selection {
+            // Select word using Ctrl + Shift + Left Arrow
+            inputs.push(make_vk(VK_CONTROL, KEYBD_EVENT_FLAGS(0)));
+            inputs.push(make_vk(VK_SHIFT, KEYBD_EVENT_FLAGS(0)));
+            inputs.push(make_vk(VK_LEFT, KEYBD_EVENT_FLAGS(0)));
+            inputs.push(make_vk(VK_LEFT, KEYEVENTF_KEYUP));
+            inputs.push(make_vk(VK_SHIFT, KEYEVENTF_KEYUP));
+            inputs.push(make_vk(VK_CONTROL, KEYEVENTF_KEYUP));
+            // Delete selection using Backspace
+            inputs.push(make_vk(VK_BACK, KEYBD_EVENT_FLAGS(0)));
+            inputs.push(make_vk(VK_BACK, KEYEVENTF_KEYUP));
+        } else {
+            for _ in 0..action.backspaces {
+                inputs.push(make_vk(VK_BACK, KEYBD_EVENT_FLAGS(0)));
+                inputs.push(make_vk(VK_BACK, KEYEVENTF_KEYUP));
+            }
+        }
     }
 
     // ── 2. Re-type ───────────────────────────────────────────────────────────

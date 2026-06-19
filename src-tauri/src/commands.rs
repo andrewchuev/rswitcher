@@ -44,6 +44,9 @@ pub fn save_settings(settings: Settings) -> Settings {
     s.undo_hotkey_win = settings.undo_hotkey_win;
     s.lang = settings.lang;
     s.sensitivity = settings.sensitivity;
+    s.ignored_words = settings.ignored_words;
+    s.dev_exceptions = settings.dev_exceptions;
+    s.use_selection_replace = settings.use_selection_replace;
 
     settings::save(&s);
     if lang_changed {

@@ -28,6 +28,8 @@ const COMMON_EN_SHORT: &[&str] = &[
     "wp", "xml", "yes", "you", "zip"
 ];
 
+include!(concat!(env!("OUT_DIR"), "/dictionaries_gen.rs"));
+
 #[derive(Debug, Clone)]
 struct Entry {
     vk: u16,
@@ -217,8 +219,46 @@ impl WordBuffer {
         let en_lower = en.to_lowercase();
         let ru_lower = ru.to_lowercase();
 
-        // ── 1. Check for single-letter words (1 char) ────────────────────────
+        // ── 0. Check whitelisted / ignored words (Undo feedback loop) ────────
+        let (ignored_words, dev_exceptions) = crate::globals::SETTINGS
+            .get()
+            .and_then(|s| s.try_read().ok())
+            .map(|s| (s.ignored_words.clone(), s.dev_exceptions.clone()))
+            .unwrap_or_else(|| (Vec::new(), Vec::new()));
+
+        let word_to_check = if layout::hkl_is_russian(active_lang) {
+            &ru_lower
+        } else {
+            &en_lower
+        };
+
+        if ignored_words.contains(word_to_check) {
+            return None;
+        }
+
+        // ── 1. Check if the word is a valid word in the current layout ────────
+        // (Dictionary Guard using EN_COMMON_WORDS / RU_COMMON_WORDS)
+        if layout::hkl_is_russian(active_lang) && RU_COMMON_WORDS.binary_search(&ru_lower.as_str()).is_ok() {
+            return None; // Valid Russian word, do not switch
+        } else if layout::hkl_is_english(active_lang) && EN_COMMON_WORDS.binary_search(&en_lower.as_str()).is_ok() {
+            return None; // Valid English word, do not switch
+        }
+
+        // ── 2. Check active app specific adjustments ─────────────────────────
+        let active_exe = crate::exceptions::foreground_exe_name();
+        let is_dev_app = active_exe
+            .as_ref()
+            .map(|exe| dev_exceptions.contains(exe))
+            .unwrap_or(false);
+
+        let adjusted_min_len = if is_dev_app { 5 } else { 4 };
+        let dev_threshold_multiplier = if is_dev_app { 1.5 } else { 1.0 };
+
+        // ── 3. Check for single-letter words (1 char) ────────────────────────
         if len == 1 {
+            if is_dev_app {
+                return None;
+            }
             let common_ru_single = ["в", "и", "а", "о", "с", "у", "я", "к"];
             let common_en_single = ["a", "i"];
             if layout::hkl_is_russian(active_lang) {
@@ -244,8 +284,11 @@ impl WordBuffer {
             return None;
         }
 
-        // ── 2. Dictionary-based check for short words (2-3 chars) ─────────────
+        // ── 4. Dictionary-based check for short words (2-3 chars) ─────────────
         if len == 2 || len == 3 {
+            if is_dev_app {
+                return None;
+            }
             if layout::hkl_is_russian(active_lang) {
                 let is_common_en = COMMON_EN_SHORT.binary_search(&en_lower.as_str()).is_ok();
                 let is_common_ru = COMMON_RU_SHORT.binary_search(&ru_lower.as_str()).is_ok();
@@ -272,14 +315,16 @@ impl WordBuffer {
             return None;
         }
 
-        // ── 3. Standard bigram language-model check (>= 4 chars) ──────────────
-        if len < 4 {
+        // ── 5. Standard trigram language-model check (>= 4 chars) ──────────────
+        if len < adjusted_min_len {
             return None;
         }
 
-        // Score using lowercase words (bigram tables are built from lowercased text).
+        // Score using lowercase words (trigram tables are built from lowercased text).
         let score_en = bigrams::score_en(&en_lower);
         let score_ru = bigrams::score_ru(&ru_lower);
+
+        let threshold = (switching_threshold(len) / sensitivity) * dev_threshold_multiplier;
 
         if layout::hkl_is_russian(active_lang) {
             // User typed with RU layout — all chars must be Cyrillic.
@@ -287,7 +332,7 @@ impl WordBuffer {
                 return None;
             }
             // Propose switching to EN only when EN is significantly more plausible.
-            if score_en - score_ru > switching_threshold(len) / sensitivity {
+            if score_en - score_ru > threshold {
                 return Some(SwitchAction {
                     backspaces: len,
                     new_word: en,
@@ -297,14 +342,11 @@ impl WordBuffer {
             }
         } else if layout::hkl_is_english(active_lang) {
             // The RU interpretation must be fully Cyrillic to be a plausible Russian word.
-            // We do NOT guard on EN chars being all-alphabetic: Russian letters like
-            // 'ж','б','х','ъ','ю' map to OEM punctuation keys (';',',','[',']','.') in EN
-            // layout, so a valid Russian word typed in EN layout will contain non-alpha chars.
             if !ru.chars().all(is_cyrillic) {
                 return None;
             }
             // Propose switching to RU only when RU is significantly more plausible.
-            if score_ru - score_en > switching_threshold(len) / sensitivity {
+            if score_ru - score_en > threshold {
                 return Some(SwitchAction {
                     backspaces: len,
                     new_word: ru,

@@ -178,6 +178,24 @@ unsafe fn process_key(
                     "[UNDO] restoring {:?}, erase={}, restore_to_ru={}",
                     s.original_word, s.erase_len, s.restore_to_ru
                 );
+                
+                // Add the restored word to the ignored_words whitelist
+                let word_to_ignore = s.original_word.to_lowercase();
+                if !word_to_ignore.is_empty() {
+                    if let Some(settings_arc) = SETTINGS.get() {
+                        if let Ok(mut settings) = settings_arc.write() {
+                            if !settings.ignored_words.contains(&word_to_ignore) {
+                                settings.ignored_words.push(word_to_ignore.clone());
+                                let settings_to_save = settings.clone();
+                                std::thread::spawn(move || {
+                                    crate::settings::save(&settings_to_save);
+                                });
+                                log_info!("[UNDO] Added '{}' to ignored_words whitelist", word_to_ignore);
+                            }
+                        }
+                    }
+                }
+
                 let undo_action = buffer::SwitchAction {
                     backspaces: s.erase_len,
                     new_word: s.original_word,

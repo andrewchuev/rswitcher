@@ -44,6 +44,7 @@ fn is_position_visible(x: i32, y: i32, app: &tauri::App) -> bool {
 
 fn main() {
     logger::init();
+    logger::setup_panic_hook();
 
     let settings = Arc::new(RwLock::new(settings::load()));
     SETTINGS
@@ -57,11 +58,16 @@ fn main() {
             std::process::id(),
             std::env::current_exe().ok()
         );
+        log_info!("OS: {}", logger::get_windows_version());
+        logger::log_keyboard_layouts();
         log_info!(
-            "settings: enabled={} exceptions={:?} sensitivity={:.1}",
+            "settings: enabled={} exceptions={:?} dev_exceptions={:?} ignored_words_count={} sensitivity={:.1} use_selection_replace={}",
             s.enabled,
             s.exceptions,
-            s.sensitivity
+            s.dev_exceptions,
+            s.ignored_words.len(),
+            s.sensitivity,
+            s.use_selection_replace
         );
     }
 

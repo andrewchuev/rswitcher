@@ -13,10 +13,13 @@ use windows::Win32::{
             VK_RETURN, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB,
         },
         WindowsAndMessaging::{
-            CallNextHookEx, DispatchMessageW, GetMessageW,
+            CallNextHookEx, DispatchMessageW, GetMessageW, GetForegroundWindow,
             SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
             KBDLLHOOKSTRUCT, KBDLLHOOKSTRUCT_FLAGS, LLKHF_INJECTED, MSG,
-            WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN, MessageBoxW, MB_ICONWARNING, MB_OK,
+            WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+            WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN,
+            WM_NCLBUTTONDOWN, WM_NCRBUTTONDOWN,
+            MessageBoxW, MB_ICONWARNING, MB_OK,
         },
     },
 };
@@ -29,12 +32,14 @@ thread_local! {
         const { RefCell::new(None) };
 
     static UNDO: RefCell<Option<UndoState>> = const { RefCell::new(None) };
+
+    static LAST_HWND: RefCell<HWND> = RefCell::new(HWND::default());
 }
 
 struct UndoState {
     original_word: String,
     erase_len: usize,
-    restore_to_ru: bool,
+    restore_lang: u16,
     boundary_vk: Option<VIRTUAL_KEY>,
 }
 
@@ -59,6 +64,29 @@ unsafe extern "system" fn hook_proc(
     );
     if !is_down {
         return CallNextHookEx(None, n_code, w_param, l_param);
+    }
+
+    // Check if the active window has changed since the last keystroke
+    let hwnd = GetForegroundWindow();
+    let window_changed = LAST_HWND.with(|cell| {
+        let mut last = cell.borrow_mut();
+        if *last != hwnd {
+            *last = hwnd;
+            true
+        } else {
+            false
+        }
+    });
+
+    if window_changed {
+        WORD_BUF.with(|c| {
+            let mut buf = c.borrow_mut();
+            if !buf.is_empty() {
+                log_info!("[FOCUS_CHANGE] window changed — buffer cleared");
+                buf.clear();
+            }
+        });
+        UNDO.with(|u| *u.borrow_mut() = None);
     }
 
     let (enabled, excluded, excluded_name, hotkey, undo_hotkey, sensitivity) = SETTINGS
@@ -175,8 +203,8 @@ unsafe fn process_key(
             let state = UNDO.with(|u| u.borrow_mut().take());
             if let Some(s) = state {
                 log_info!(
-                    "[UNDO] restoring {:?}, erase={}, restore_to_ru={}",
-                    s.original_word, s.erase_len, s.restore_to_ru
+                    "[UNDO] restoring {:?}, erase={}, restore_lang={:#06x}",
+                    s.original_word, s.erase_len, s.restore_lang
                 );
                 
                 // Add the restored word to the ignored_words whitelist
@@ -199,7 +227,7 @@ unsafe fn process_key(
                 let undo_action = buffer::SwitchAction {
                     backspaces: s.erase_len,
                     new_word: s.original_word,
-                    to_ru: s.restore_to_ru,
+                    target_lang: s.restore_lang,
                     original_word: String::new(),
                 };
                 switcher::perform_switch(&undo_action, s.boundary_vk);
@@ -219,13 +247,12 @@ unsafe fn process_key(
             if let Some(action) = buf.force_switch(lang) {
                 if let Some(ref s) = snap {
                     log_info!(
-                        "[FORCE] lang={:#06x} en={:?} ru={:?} score_en={:.2} score_ru={:.2} → {}→{}",
-                        lang, s.en_word, s.ru_word, s.score_en, s.score_ru,
-                        if action.to_ru { "EN" } else { "RU" },
-                        if action.to_ru { "RU" } else { "EN" },
+                        "[FORCE] lang={:#06x} en={:?} ru={:?} ua={:?} score_en={:.2} score_ru={:.2} score_ua={:.2} → target={:#06x}",
+                        lang, s.en_word, s.ru_word, s.ua_word, s.score_en, s.score_ru, s.score_ua,
+                        action.target_lang
                     );
                 }
-                save_undo(&action, None);
+                save_undo(&action, None, lang);
                 buf.clear();
                 PREV_WORD_BUF.with(|p| *p.borrow_mut() = None);
                 switcher::perform_switch(&action, None);
@@ -236,16 +263,15 @@ unsafe fn process_key(
                     if let Some(action) = prev_buf.force_switch(lang) {
                         if let Some(ref s) = prev_snap {
                             log_info!(
-                                "[FORCE-PREV] lang={:#06x} en={:?} ru={:?} score_en={:.2} score_ru={:.2} → {}→{} boundary={:#04x}",
-                                lang, s.en_word, s.ru_word, s.score_en, s.score_ru,
-                                if action.to_ru { "EN" } else { "RU" },
-                                if action.to_ru { "RU" } else { "EN" },
+                                "[FORCE-PREV] lang={:#06x} en={:?} ru={:?} ua={:?} score_en={:.2} score_ru={:.2} score_ua={:.2} → target={:#06x} boundary={:#04x}",
+                                lang, s.en_word, s.ru_word, s.ua_word, s.score_en, s.score_ru, s.score_ua,
+                                action.target_lang,
                                 boundary_vk.0
                             );
                         }
                         let mut force_action = action.clone();
                         force_action.backspaces += 1;
-                        save_undo(&force_action, Some(boundary_vk));
+                        save_undo(&force_action, Some(boundary_vk), lang);
                         buf.clear();
                         switcher::perform_switch(&force_action, Some(boundary_vk));
                     }
@@ -274,13 +300,21 @@ unsafe fn process_key(
 
             if let Some(ref s) = snap {
                 match &result {
-                    Some(action) => log_info!(
-                        "[DETECT] lang={:#06x} en={:?} ru={:?} score_en={:.2} score_ru={:.2} diff={:+.2} → SWITCH_{} boundary={:#04x}",
-                        lang, s.en_word, s.ru_word, s.score_en, s.score_ru,
-                        s.score_en - s.score_ru,
-                        if action.to_ru { "EN→RU" } else { "RU→EN" },
-                        vk.0
-                    ),
+                    Some(action) => {
+                        let switch_direction = if action.target_lang == layout::LANG_EN_US {
+                            if layout::hkl_is_russian(lang) { "RU→EN" } else { "UA→EN" }
+                        } else if action.target_lang == layout::LANG_RU {
+                            "EN→RU"
+                        } else {
+                            "EN→UA"
+                        };
+                        log_info!(
+                            "[DETECT] lang={:#06x} en={:?} ru={:?} ua={:?} score_en={:.2} score_ru={:.2} score_ua={:.2} → SWITCH_{} boundary={:#04x}",
+                            lang, s.en_word, s.ru_word, s.ua_word, s.score_en, s.score_ru, s.score_ua,
+                            switch_direction,
+                            vk.0
+                        );
+                    }
                     None => {
                         let reason = if s.len == 1 {
                             "skip (single-char)".to_string()
@@ -290,9 +324,8 @@ unsafe fn process_key(
                             format!("skip (threshold={:.2})", buffer::switching_threshold(s.len) / sensitivity)
                         };
                         log_info!(
-                            "[DETECT] lang={:#06x} en={:?} ru={:?} score_en={:.2} score_ru={:.2} diff={:+.2} → {}",
-                            lang, s.en_word, s.ru_word, s.score_en, s.score_ru,
-                            s.score_en - s.score_ru,
+                            "[DETECT] lang={:#06x} en={:?} ru={:?} ua={:?} score_en={:.2} score_ru={:.2} score_ua={:.2} → {}",
+                            lang, s.en_word, s.ru_word, s.ua_word, s.score_en, s.score_ru, s.score_ua,
                             reason
                         );
                     }
@@ -300,7 +333,7 @@ unsafe fn process_key(
             }
 
             if let Some(action) = result {
-                save_undo(&action, Some(vk));
+                save_undo(&action, Some(vk), lang);
                 buf.clear();
                 PREV_WORD_BUF.with(|p| *p.borrow_mut() = None);
                 switcher::perform_switch(&action, Some(vk));
@@ -336,13 +369,21 @@ unsafe fn process_key(
                 let result = buf.detect_mismatch_with_sensitivity(lang, sensitivity);
                 if let Some(ref s) = snap {
                     match &result {
-                        Some(action) => log_info!(
-                            "[DETECT] lang={:#06x} en={:?} ru={:?} score_en={:.2} score_ru={:.2} diff={:+.2} → SWITCH_{} boundary=vk{:#04x}",
-                            lang, s.en_word, s.ru_word, s.score_en, s.score_ru,
-                            s.score_en - s.score_ru,
-                            if action.to_ru { "EN→RU" } else { "RU→EN" },
-                            vk.0
-                        ),
+                        Some(action) => {
+                            let switch_direction = if action.target_lang == layout::LANG_EN_US {
+                                if layout::hkl_is_russian(lang) { "RU→EN" } else { "UA→EN" }
+                            } else if action.target_lang == layout::LANG_RU {
+                                "EN→RU"
+                            } else {
+                                "EN→UA"
+                            };
+                            log_info!(
+                                "[DETECT] lang={:#06x} en={:?} ru={:?} ua={:?} score_en={:.2} score_ru={:.2} score_ua={:.2} → SWITCH_{} boundary=vk{:#04x}",
+                                lang, s.en_word, s.ru_word, s.ua_word, s.score_en, s.score_ru, s.score_ua,
+                                switch_direction,
+                                vk.0
+                            );
+                        }
                         None => {
                             let reason = if s.len == 1 {
                                 "skip (single-char)".to_string()
@@ -352,16 +393,15 @@ unsafe fn process_key(
                                 format!("skip (threshold={:.2})", buffer::switching_threshold(s.len) / sensitivity)
                             };
                             log_info!(
-                                "[DETECT] lang={:#06x} en={:?} ru={:?} score_en={:.2} score_ru={:.2} diff={:+.2} → {}",
-                                lang, s.en_word, s.ru_word, s.score_en, s.score_ru,
-                                s.score_en - s.score_ru,
+                                "[DETECT] lang={:#06x} en={:?} ru={:?} ua={:?} score_en={:.2} score_ru={:.2} score_ua={:.2} → {}",
+                                lang, s.en_word, s.ru_word, s.ua_word, s.score_en, s.score_ru, s.score_ua,
                                 reason
                             );
                         }
                     }
                 }
                 if let Some(action) = result {
-                    save_undo(&action, None);
+                    save_undo(&action, None, lang);
                     buf.clear();
                     switcher::perform_switch(&action, None);
                 } else {
@@ -374,27 +414,54 @@ unsafe fn process_key(
     }
 }
 
-fn save_undo(action: &buffer::SwitchAction, boundary_vk: Option<VIRTUAL_KEY>) {
+fn save_undo(action: &buffer::SwitchAction, boundary_vk: Option<VIRTUAL_KEY>, original_lang: u16) {
     UNDO.with(|u| {
         *u.borrow_mut() = Some(UndoState {
             original_word: action.original_word.clone(),
             erase_len: action.new_word.chars().count() + if boundary_vk.is_some() { 1 } else { 0 },
-            restore_to_ru: !action.to_ru,
+            restore_lang: original_lang,
             boundary_vk,
         });
     });
+}
+
+unsafe extern "system" fn mouse_hook_proc(
+    n_code: i32,
+    w_param: WPARAM,
+    l_param: LPARAM,
+) -> LRESULT {
+    if n_code >= 0 {
+        let msg = w_param.0 as u32;
+        if msg == WM_LBUTTONDOWN
+            || msg == WM_RBUTTONDOWN
+            || msg == WM_MBUTTONDOWN
+            || msg == WM_NCLBUTTONDOWN
+            || msg == WM_NCRBUTTONDOWN
+        {
+            WORD_BUF.with(|c| {
+                let mut buf = c.borrow_mut();
+                if !buf.is_empty() {
+                    log_debug!("[MOUSE_CLICK] buffer cleared");
+                    buf.clear();
+                }
+            });
+            UNDO.with(|u| *u.borrow_mut() = None);
+        }
+    }
+    CallNextHookEx(None, n_code, w_param, l_param)
 }
 
 pub fn start_hook_thread() -> std::thread::JoinHandle<()> {
     std::thread::Builder::new()
         .name("rswitcher-hook".into())
         .spawn(|| {
-            let hook = unsafe {
-                let hmod = GetModuleHandleW(None).expect("GetModuleHandleW failed");
+            let hmod = unsafe { GetModuleHandleW(None).expect("GetModuleHandleW failed") };
+
+            let kb_hook = unsafe {
                 match SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), HINSTANCE(hmod.0), 0) {
                     Ok(h) => h,
                     Err(e) => {
-                        log_error!("SetWindowsHookExW failed: {:?}", e);
+                        log_error!("SetWindowsHookExW (keyboard) failed: {:?}", e);
                         let _ = MessageBoxW(
                             HWND::default(),
                             windows::core::w!("Не удалось запустить клавиатурный перехватчик RSwitcher (SetWindowsHookExW failed).\nПриложение будет закрыто."),
@@ -405,7 +472,18 @@ pub fn start_hook_thread() -> std::thread::JoinHandle<()> {
                     }
                 }
             };
-            log_info!("[hook] installed");
+
+            let mouse_hook = unsafe {
+                match SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), HINSTANCE(hmod.0), 0) {
+                    Ok(h) => Some(h),
+                    Err(e) => {
+                        log_error!("SetWindowsHookExW (mouse) failed: {:?}", e);
+                        None
+                    }
+                }
+            };
+
+            log_info!("[hook] installed (keyboard={:?}, mouse={:?})", kb_hook, mouse_hook);
 
             let mut msg = MSG::default();
             loop {
@@ -419,7 +497,12 @@ pub fn start_hook_thread() -> std::thread::JoinHandle<()> {
                 }
             }
 
-            unsafe { UnhookWindowsHookEx(hook).ok() };
+            unsafe {
+                UnhookWindowsHookEx(kb_hook).ok();
+                if let Some(h) = mouse_hook {
+                    UnhookWindowsHookEx(h).ok();
+                }
+            };
             log_info!("[hook] uninstalled");
         })
         .expect("failed to spawn hook thread")

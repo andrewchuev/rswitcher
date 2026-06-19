@@ -107,3 +107,34 @@ pub fn set_autostart(enabled: bool) {
 pub fn is_autostart_enabled() -> bool {
     autostart::is_enabled()
 }
+
+#[tauri::command]
+pub fn is_elevated() -> bool {
+    exceptions::is_current_process_elevated()
+}
+
+#[tauri::command]
+pub fn restart_as_admin() -> Result<(), String> {
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOW;
+    use windows::core::PCWSTR;
+
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe_wide: Vec<u16> = exe.to_string_lossy().encode_utf16().chain([0]).collect();
+
+    unsafe {
+        let instance = ShellExecuteW(
+            None,
+            windows::core::w!("runas"),
+            PCWSTR(exe_wide.as_ptr()),
+            None,
+            None,
+            SW_SHOW,
+        );
+        let code = instance.0 as usize;
+        if code <= 32 {
+            return Err(format!("ShellExecuteW failed with code {}", code));
+        }
+    }
+    std::process::exit(0);
+}

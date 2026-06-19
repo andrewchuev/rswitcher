@@ -12,6 +12,12 @@
 </head>
 <body>
   <div class="app-container">
+    <!-- Admin Warning Banner -->
+    <div id="admin-warning-banner" class="admin-warning-banner" style="display: none;">
+      <span class="warning-text" data-i18n="adminWarningText">Running as standard user. RSwitcher won't work in Administrator windows.</span>
+      <button id="restart-admin-btn" class="btn btn-warning-action" data-i18n="restartAdminBtn">Restart as Admin</button>
+    </div>
+
     <!-- Header -->
     <header class="app-header">
       <h1 class="logo">RSwitcher</h1>
@@ -184,11 +190,23 @@
             <h2 data-i18n="ignoredWordsTitle">Ignored Words</h2>
             <span class="subtitle" data-i18n="ignoredWordsSubtitle">words whitelisted by the Undo hotkey</span>
           </div>
-          <div class="ignored-words-container">
+          <div class="ignored-words-container" style="margin-bottom: 12px;">
             <div id="ignored-words-list" class="ignored-tags">
               <!-- Ignored word tags injected dynamically -->
             </div>
-            <button id="clear-ignored-btn" class="btn btn-secondary" data-i18n="clearIgnoredBtn">Clear Whitelist</button>
+          </div>
+          <div class="grid-form">
+            <div class="form-row">
+              <span class="row-label" data-i18n="manualLabel">Manual:</span>
+              <div class="input-group">
+                <input type="text" id="ignored-manual-input" placeholder="word" data-i18n-placeholder="ignoredManualPlaceholder" autocomplete="off">
+                <button id="ignored-add-btn" class="btn" data-i18n="addButton">Add</button>
+              </div>
+            </div>
+            <div class="form-row">
+              <span class="row-label">&nbsp;</span>
+              <button id="clear-ignored-btn" class="btn btn-secondary" data-i18n="clearIgnoredBtn">Clear Whitelist</button>
+            </div>
           </div>
         </section>
       </div>

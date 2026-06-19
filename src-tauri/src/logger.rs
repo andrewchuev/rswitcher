@@ -231,6 +231,8 @@ pub fn log_keyboard_layouts() {
                     format!("{:#06x} (Russian)", lang_id)
                 } else if crate::layout::hkl_is_english(lang_id) {
                     format!("{:#06x} (English)", lang_id)
+                } else if crate::layout::hkl_is_ukrainian(lang_id) {
+                    format!("{:#06x} (Ukrainian)", lang_id)
                 } else {
                     format!("{:#06x}", lang_id)
                 };

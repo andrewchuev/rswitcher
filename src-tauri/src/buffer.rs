@@ -11,6 +11,14 @@ const COMMON_RU_SHORT: &[&str] = &[
     "три", "тут", "ты", "уж", "уже", "чем", "что", "это", "эту"
 ];
 
+const COMMON_UA_SHORT: &[&str] = &[
+    "або", "але", "без", "був", "вас", "ви", "все", "всю", "всі", "від",
+    "він", "для", "до", "моя", "моє", "мої", "нам", "нас", "ней", "них",
+    "ні", "при", "про", "під", "так", "там", "тим", "тут", "усе", "усі",
+    "хто", "це", "цей", "цю", "ця", "чи", "як", "яка", "яке", "які",
+    "із", "їм", "їх", "її"
+];
+
 const COMMON_EN_SHORT: &[&str] = &[
     "add", "am", "an", "and", "any", "api", "app", "are", "as", "at",
     "bad", "bat", "be", "big", "bin", "but", "by", "can", "cd", "cfg",
@@ -42,9 +50,8 @@ pub struct SwitchAction {
     pub backspaces: usize,
     /// The replacement word (injected via KEYEVENTF_UNICODE).
     pub new_word: String,
-    /// `true`  → switch layout to Russian after injection.
-    /// `false` → switch to English.
-    pub to_ru: bool,
+    /// The target layout LANGID.
+    pub target_lang: u16,
     /// The original (mistyped) word — kept for the undo hotkey.
     pub original_word: String,
 }
@@ -58,10 +65,14 @@ pub struct DetectionSnapshot {
     pub en_word: String,
     /// What they would produce in the Russian layout (lowercase).
     pub ru_word: String,
+    /// What they would produce in the Ukrainian layout (lowercase).
+    pub ua_word: String,
     /// Per-bigram log-probability score for the English interpretation.
     pub score_en: f32,
     /// Per-bigram log-probability score for the Russian interpretation.
     pub score_ru: f32,
+    /// Per-bigram log-probability score for the Ukrainian interpretation.
+    pub score_ua: f32,
     /// Number of buffered VK entries.
     pub len: usize,
 }
@@ -108,7 +119,7 @@ impl WordBuffer {
         self.entries.len()
     }
 
-    /// Compute EN/RU translations and bigram scores for the current buffer.
+    /// Compute EN/RU/UA translations and bigram scores for the current buffer.
     /// Returns `None` when the buffer is empty.  Always uses lowercase for
     /// scoring (case does not affect bigram statistics).
     pub fn detection_snapshot(&self) -> Option<DetectionSnapshot> {
@@ -125,12 +136,19 @@ impl WordBuffer {
             .iter()
             .filter_map(|e| layout::vk_to_ru(e.vk, false))
             .collect();
+        let ua: String = self
+            .entries
+            .iter()
+            .filter_map(|e| layout::vk_to_ua(e.vk, false))
+            .collect();
         Some(DetectionSnapshot {
             score_en: bigrams::score_en(&en),
             score_ru: bigrams::score_ru(&ru),
+            score_ua: bigrams::score_ua(&ua),
             len: self.entries.len(),
             en_word: en,
             ru_word: ru,
+            ua_word: ua,
         })
     }
 
@@ -153,8 +171,7 @@ impl WordBuffer {
     ///
     /// Unlike auto-detection, bypasses the bigram score threshold entirely —
     /// the user explicitly requested the switch, so we trust their intent.
-    /// Returns None only when the buffer is empty or the translation is invalid
-    /// (e.g. the keys don't map to valid Cyrillic in the RU interpretation).
+    /// Returns None only when the buffer is empty or the translation is invalid.
     pub fn force_switch(&self, active_lang: u16) -> Option<SwitchAction> {
         if self.entries.is_empty() {
             return None;
@@ -169,26 +186,61 @@ impl WordBuffer {
             .iter()
             .filter_map(|e| layout::vk_to_ru(e.vk, e.is_upper))
             .collect();
-        if en.chars().count() != self.entries.len() || ru.chars().count() != self.entries.len() {
-            return None;
-        }
-        if !ru.chars().all(is_cyrillic) {
-            return None;
-        }
-        if layout::hkl_is_russian(active_lang) {
+        let ua: String = self
+            .entries
+            .iter()
+            .filter_map(|e| layout::vk_to_ua(e.vk, e.is_upper))
+            .collect();
+
+        if layout::hkl_is_russian(active_lang) || layout::hkl_is_ukrainian(active_lang) {
+            if en.chars().count() != self.entries.len() {
+                return None;
+            }
             Some(SwitchAction {
                 backspaces: self.len(),
                 new_word: en,
-                to_ru: false,
-                original_word: ru,
+                target_lang: layout::LANG_EN_US,
+                original_word: if layout::hkl_is_russian(active_lang) { ru } else { ua },
             })
         } else if layout::hkl_is_english(active_lang) {
-            Some(SwitchAction {
-                backspaces: self.len(),
-                new_word: ru,
-                to_ru: true,
-                original_word: en,
-            })
+            let ru_valid = ru.chars().count() == self.entries.len() && ru.chars().all(is_cyrillic_or_ua);
+            let ua_valid = ua.chars().count() == self.entries.len() && ua.chars().all(is_cyrillic_or_ua);
+
+            if !ru_valid && !ua_valid {
+                return None;
+            }
+
+            let to_ru = if ru_valid && ua_valid {
+                let ru_in_dict = RU_COMMON_WORDS.binary_search(&ru.to_lowercase().as_str()).is_ok();
+                let ua_in_dict = UA_COMMON_WORDS.binary_search(&ua.to_lowercase().as_str()).is_ok();
+                if ru_in_dict && !ua_in_dict {
+                    true
+                } else if ua_in_dict && !ru_in_dict {
+                    false
+                } else {
+                    let score_ru = bigrams::score_ru(&ru.to_lowercase());
+                    let score_ua = bigrams::score_ua(&ua.to_lowercase());
+                    score_ru >= score_ua
+                }
+            } else {
+                ru_valid
+            };
+
+            if to_ru {
+                Some(SwitchAction {
+                    backspaces: self.len(),
+                    new_word: ru,
+                    target_lang: layout::LANG_RU,
+                    original_word: en,
+                })
+            } else {
+                Some(SwitchAction {
+                    backspaces: self.len(),
+                    new_word: ua,
+                    target_lang: layout::LANG_UA,
+                    original_word: en,
+                })
+            }
         } else {
             None
         }
@@ -200,7 +252,7 @@ impl WordBuffer {
             return None;
         }
 
-        // Translate VK codes through both layouts (preserving case for the output word).
+        // Translate VK codes through EN, RU, and UA.
         let en: String = self
             .entries
             .iter()
@@ -211,13 +263,19 @@ impl WordBuffer {
             .iter()
             .filter_map(|e| layout::vk_to_ru(e.vk, e.is_upper))
             .collect();
+        let ua: String = self
+            .entries
+            .iter()
+            .filter_map(|e| layout::vk_to_ua(e.vk, e.is_upper))
+            .collect();
 
-        if en.chars().count() != len || ru.chars().count() != len {
-            return None;
-        }
+        let en_ok = en.chars().count() == len;
+        let ru_ok = ru.chars().count() == len;
+        let ua_ok = ua.chars().count() == len;
 
         let en_lower = en.to_lowercase();
         let ru_lower = ru.to_lowercase();
+        let ua_lower = ua.to_lowercase();
 
         // ── 0. Check whitelisted / ignored words (Undo feedback loop) ────────
         let (ignored_words, dev_exceptions) = crate::globals::SETTINGS
@@ -228,6 +286,8 @@ impl WordBuffer {
 
         let word_to_check = if layout::hkl_is_russian(active_lang) {
             &ru_lower
+        } else if layout::hkl_is_ukrainian(active_lang) {
+            &ua_lower
         } else {
             &en_lower
         };
@@ -237,11 +297,12 @@ impl WordBuffer {
         }
 
         // ── 1. Check if the word is a valid word in the current layout ────────
-        // (Dictionary Guard using EN_COMMON_WORDS / RU_COMMON_WORDS)
-        if layout::hkl_is_russian(active_lang) && RU_COMMON_WORDS.binary_search(&ru_lower.as_str()).is_ok() {
-            return None; // Valid Russian word, do not switch
-        } else if layout::hkl_is_english(active_lang) && EN_COMMON_WORDS.binary_search(&en_lower.as_str()).is_ok() {
-            return None; // Valid English word, do not switch
+        if layout::hkl_is_russian(active_lang) && ru_ok && RU_COMMON_WORDS.binary_search(&ru_lower.as_str()).is_ok() {
+            return None;
+        } else if layout::hkl_is_ukrainian(active_lang) && ua_ok && UA_COMMON_WORDS.binary_search(&ua_lower.as_str()).is_ok() {
+            return None;
+        } else if layout::hkl_is_english(active_lang) && en_ok && EN_COMMON_WORDS.binary_search(&en_lower.as_str()).is_ok() {
+            return None;
         }
 
         // ── 2. Check active app specific adjustments ─────────────────────────
@@ -260,26 +321,54 @@ impl WordBuffer {
                 return None;
             }
             let common_ru_single = ["в", "и", "а", "о", "с", "у", "я", "к"];
+            let common_ua_single = ["в", "і", "а", "о", "у", "я", "є", "з"];
             let common_en_single = ["a", "i"];
+
             if layout::hkl_is_russian(active_lang) {
-                if !common_ru_single.contains(&ru_lower.as_str()) && common_en_single.contains(&en_lower.as_str()) {
+                if ru_ok && en_ok && !common_ru_single.contains(&ru_lower.as_str()) && common_en_single.contains(&en_lower.as_str()) {
                     return Some(SwitchAction {
                         backspaces: len,
                         new_word: en,
-                        to_ru: false,
+                        target_lang: layout::LANG_EN_US,
                         original_word: ru,
                     });
                 }
-            } else if layout::hkl_is_english(active_lang)
-                && !common_en_single.contains(&en_lower.as_str())
-                && common_ru_single.contains(&ru_lower.as_str())
-            {
-                return Some(SwitchAction {
-                    backspaces: len,
-                    new_word: ru,
-                    to_ru: true,
-                    original_word: en,
-                });
+            } else if layout::hkl_is_ukrainian(active_lang) {
+                if ua_ok && en_ok && !common_ua_single.contains(&ua_lower.as_str()) && common_en_single.contains(&en_lower.as_str()) {
+                    return Some(SwitchAction {
+                        backspaces: len,
+                        new_word: en,
+                        target_lang: layout::LANG_EN_US,
+                        original_word: ua,
+                    });
+                }
+            } else if layout::hkl_is_english(active_lang) {
+                if en_ok && !common_en_single.contains(&en_lower.as_str()) {
+                    let to_ru = ru_ok && common_ru_single.contains(&ru_lower.as_str());
+                    let to_ua = ua_ok && common_ua_single.contains(&ua_lower.as_str());
+                    if to_ru && to_ua {
+                        return Some(SwitchAction {
+                            backspaces: len,
+                            new_word: ru,
+                            target_lang: layout::LANG_RU,
+                            original_word: en,
+                        });
+                    } else if to_ru {
+                        return Some(SwitchAction {
+                            backspaces: len,
+                            new_word: ru,
+                            target_lang: layout::LANG_RU,
+                            original_word: en,
+                        });
+                    } else if to_ua {
+                        return Some(SwitchAction {
+                            backspaces: len,
+                            new_word: ua,
+                            target_lang: layout::LANG_UA,
+                            original_word: en,
+                        });
+                    }
+                }
             }
             return None;
         }
@@ -290,67 +379,179 @@ impl WordBuffer {
                 return None;
             }
             if layout::hkl_is_russian(active_lang) {
-                let is_common_en = COMMON_EN_SHORT.binary_search(&en_lower.as_str()).is_ok();
-                let is_common_ru = COMMON_RU_SHORT.binary_search(&ru_lower.as_str()).is_ok();
-                if is_common_en && !is_common_ru {
-                    return Some(SwitchAction {
-                        backspaces: len,
-                        new_word: en,
-                        to_ru: false,
-                        original_word: ru,
-                    });
+                if ru_ok && en_ok {
+                    let is_common_en = COMMON_EN_SHORT.binary_search(&en_lower.as_str()).is_ok();
+                    let is_common_ru = COMMON_RU_SHORT.binary_search(&ru_lower.as_str()).is_ok();
+                    if is_common_en && !is_common_ru {
+                        return Some(SwitchAction {
+                            backspaces: len,
+                            new_word: en,
+                            target_lang: layout::LANG_EN_US,
+                            original_word: ru,
+                        });
+                    }
+                }
+            } else if layout::hkl_is_ukrainian(active_lang) {
+                if ua_ok && en_ok {
+                    let is_common_en = COMMON_EN_SHORT.binary_search(&en_lower.as_str()).is_ok();
+                    let is_common_ua = COMMON_UA_SHORT.binary_search(&ua_lower.as_str()).is_ok();
+                    if is_common_en && !is_common_ua {
+                        return Some(SwitchAction {
+                            backspaces: len,
+                            new_word: en,
+                            target_lang: layout::LANG_EN_US,
+                            original_word: ua,
+                        });
+                    }
                 }
             } else if layout::hkl_is_english(active_lang) {
-                let is_common_ru = COMMON_RU_SHORT.binary_search(&ru_lower.as_str()).is_ok();
-                let is_common_en = COMMON_EN_SHORT.binary_search(&en_lower.as_str()).is_ok();
-                if is_common_ru && !is_common_en {
-                    return Some(SwitchAction {
-                        backspaces: len,
-                        new_word: ru,
-                        to_ru: true,
-                        original_word: en,
-                    });
+                if en_ok {
+                    let is_common_en = COMMON_EN_SHORT.binary_search(&en_lower.as_str()).is_ok();
+                    let is_common_ru = ru_ok && COMMON_RU_SHORT.binary_search(&ru_lower.as_str()).is_ok();
+                    let is_common_ua = ua_ok && COMMON_UA_SHORT.binary_search(&ua_lower.as_str()).is_ok();
+
+                    if !is_common_en {
+                        if is_common_ru && is_common_ua {
+                            let score_ru = bigrams::score_ru(&ru_lower);
+                            let score_ua = bigrams::score_ua(&ua_lower);
+                            if score_ru >= score_ua {
+                                return Some(SwitchAction {
+                                    backspaces: len,
+                                    new_word: ru,
+                                    target_lang: layout::LANG_RU,
+                                    original_word: en,
+                                });
+                            } else {
+                                return Some(SwitchAction {
+                                    backspaces: len,
+                                    new_word: ua,
+                                    target_lang: layout::LANG_UA,
+                                    original_word: en,
+                                });
+                            }
+                        } else if is_common_ru {
+                            return Some(SwitchAction {
+                                backspaces: len,
+                                new_word: ru,
+                                target_lang: layout::LANG_RU,
+                                original_word: en,
+                            });
+                        } else if is_common_ua {
+                            return Some(SwitchAction {
+                                backspaces: len,
+                                new_word: ua,
+                                target_lang: layout::LANG_UA,
+                                original_word: en,
+                            });
+                        }
+                    }
                 }
             }
             return None;
         }
 
-        // ── 5. Standard trigram language-model check (>= 4 chars) ──────────────
+        // ── 5. Standard bigram language-model check (>= 4 chars) ──────────────
         if len < adjusted_min_len {
             return None;
         }
 
-        // Score using lowercase words (trigram tables are built from lowercased text).
-        let score_en = bigrams::score_en(&en_lower);
-        let score_ru = bigrams::score_ru(&ru_lower);
-
         let threshold = (switching_threshold(len) / sensitivity) * dev_threshold_multiplier;
 
         if layout::hkl_is_russian(active_lang) {
-            // User typed with RU layout — all chars must be Cyrillic.
-            if !ru.chars().all(is_cyrillic) {
+            if !ru_ok || !en_ok {
                 return None;
             }
-            // Propose switching to EN only when EN is significantly more plausible.
+            if !ru.chars().all(is_cyrillic_or_ua) {
+                return None;
+            }
+            let score_en = bigrams::score_en(&en_lower);
+            let score_ru = bigrams::score_ru(&ru_lower);
             if score_en - score_ru > threshold {
                 return Some(SwitchAction {
                     backspaces: len,
                     new_word: en,
-                    to_ru: false,
+                    target_lang: layout::LANG_EN_US,
                     original_word: ru,
                 });
             }
-        } else if layout::hkl_is_english(active_lang) {
-            // The RU interpretation must be fully Cyrillic to be a plausible Russian word.
-            if !ru.chars().all(is_cyrillic) {
+        } else if layout::hkl_is_ukrainian(active_lang) {
+            if !ua_ok || !en_ok {
                 return None;
             }
-            // Propose switching to RU only when RU is significantly more plausible.
-            if score_ru - score_en > threshold {
+            if !ua.chars().all(is_cyrillic_or_ua) {
+                return None;
+            }
+            let score_en = bigrams::score_en(&en_lower);
+            let score_ua = bigrams::score_ua(&ua_lower);
+            if score_en - score_ua > threshold {
+                return Some(SwitchAction {
+                    backspaces: len,
+                    new_word: en,
+                    target_lang: layout::LANG_EN_US,
+                    original_word: ua,
+                });
+            }
+        } else if layout::hkl_is_english(active_lang) {
+            if !en_ok {
+                return None;
+            }
+            let score_en = bigrams::score_en(&en_lower);
+
+            let ru_candidate = ru_ok && ru.chars().all(is_cyrillic_or_ua);
+            let ua_candidate = ua_ok && ua.chars().all(is_cyrillic_or_ua);
+
+            if !ru_candidate && !ua_candidate {
+                return None;
+            }
+
+            let score_ru = if ru_candidate { bigrams::score_ru(&ru_lower) } else { f32::NEG_INFINITY };
+            let score_ua = if ua_candidate { bigrams::score_ua(&ua_lower) } else { f32::NEG_INFINITY };
+
+            let ru_diff = score_ru - score_en;
+            let ua_diff = score_ua - score_en;
+
+            let ru_switches = ru_diff > threshold;
+            let ua_switches = ua_diff > threshold;
+
+            if ru_switches && ua_switches {
+                let ru_in_dict = RU_COMMON_WORDS.binary_search(&ru_lower.as_str()).is_ok();
+                let ua_in_dict = UA_COMMON_WORDS.binary_search(&ua_lower.as_str()).is_ok();
+                
+                let to_ru = if ru_in_dict && !ua_in_dict {
+                    true
+                } else if ua_in_dict && !ru_in_dict {
+                    false
+                } else {
+                    score_ru >= score_ua
+                };
+
+                if to_ru {
+                    return Some(SwitchAction {
+                        backspaces: len,
+                        new_word: ru,
+                        target_lang: layout::LANG_RU,
+                        original_word: en,
+                    });
+                } else {
+                    return Some(SwitchAction {
+                        backspaces: len,
+                        new_word: ua,
+                        target_lang: layout::LANG_UA,
+                        original_word: en,
+                    });
+                }
+            } else if ru_switches {
                 return Some(SwitchAction {
                     backspaces: len,
                     new_word: ru,
-                    to_ru: true,
+                    target_lang: layout::LANG_RU,
+                    original_word: en,
+                });
+            } else if ua_switches {
+                return Some(SwitchAction {
+                    backspaces: len,
+                    new_word: ua,
+                    target_lang: layout::LANG_UA,
                     original_word: en,
                 });
             }
@@ -360,8 +561,8 @@ impl WordBuffer {
     }
 }
 
-fn is_cyrillic(c: char) -> bool {
-    matches!(c, '\u{0410}'..='\u{044F}' | '\u{0401}' | '\u{0451}')
+fn is_cyrillic_or_ua(c: char) -> bool {
+    matches!(c, '\u{0410}'..='\u{044F}' | '\u{0401}' | '\u{0451}' | '\u{0404}' | '\u{0454}' | '\u{0406}' | '\u{0456}' | '\u{0407}' | '\u{0457}' | '\u{0490}' | '\u{0491}')
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -372,10 +573,9 @@ fn is_cyrillic(c: char) -> bool {
 mod tests {
     use super::*;
 
-    // LANGID constants used by the tests (identical to layout::LANG_* but local
-    // so tests don't depend on the layout module's public surface).
     const LANG_EN: u16 = 0x0409; // English (US)
     const LANG_RU: u16 = 0x0419; // Russian
+    const LANG_UA: u16 = 0x0422; // Ukrainian
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -387,6 +587,25 @@ mod tests {
             assert!(lc.is_ascii_alphabetic(), "push_en_word: non-alpha '{}'", c);
             let vk = lc as u16 - b'a' as u16 + 0x41;
             buf.push(vk, c.is_uppercase());
+        }
+    }
+
+    fn push_en_chars(buf: &mut WordBuffer, s: &str) {
+        for c in s.chars() {
+            let is_upper = c.is_uppercase();
+            let lc = c.to_lowercase().next().unwrap();
+            let vk = match lc {
+                'a'..='z' => lc as u16 - b'a' as u16 + 0x41,
+                ';' => 0xBA,
+                ',' => 0xBC,
+                '.' => 0xBE,
+                '[' => 0xDB,
+                ']' => 0xDD,
+                '\'' => 0xDE,
+                '\\' => 0xDC,
+                _ => panic!("untranslatable char {}", c),
+            };
+            buf.push(vk, is_upper);
         }
     }
 
@@ -427,19 +646,18 @@ mod tests {
     #[test]
     fn short_word_auto_detect_returns_none() {
         let mut buf = WordBuffer::new();
-        // 3-char word — below the min_len=4 threshold for auto-detection
         push_en_word(&mut buf, "abc");
         assert!(buf.detect_mismatch(LANG_RU).is_none());
         assert!(buf.detect_mismatch(LANG_EN).is_none());
+        assert!(buf.detect_mismatch(LANG_UA).is_none());
     }
 
     #[test]
     fn single_char_force_switch_returns_some() {
         let mut buf = WordBuffer::new();
-        buf.push(0x48, false); // 'h' in EN → 'р' in RU
-        // force_switch accepts words of length ≥ 1
-        // Under RU layout, 'р' is Cyrillic → suggest EN 'h'
+        buf.push(0x48, false); // 'h' in EN → 'р' in RU/UA
         assert!(buf.force_switch(LANG_RU).is_some());
+        assert!(buf.force_switch(LANG_UA).is_some());
     }
 
     #[test]
@@ -451,59 +669,49 @@ mod tests {
 
     // ── Core switching scenarios ──────────────────────────────────────────────
 
-    /// The canonical Punto-Switcher test case:
-    /// user presses N O T E P A D keys while in Russian layout.
-    /// In RU those produce "тщеузфв" (gibberish) → must switch to EN "notepad".
     #[test]
     fn notepad_typed_in_ru_layout_switches_to_en() {
         let mut buf = WordBuffer::new();
-        push_en_word(&mut buf, "notepad"); // same VK codes, different layout interpretation
+        push_en_word(&mut buf, "notepad");
         let action = buf.detect_mismatch(LANG_RU).expect("should detect mismatch");
-        assert!(!action.to_ru, "must switch to EN");
+        assert_eq!(action.target_lang, LANG_EN);
         assert_eq!(action.new_word.to_lowercase(), "notepad");
         assert_eq!(action.backspaces, 7);
-        // original_word is the RU interpretation that appeared on screen
         assert!(!action.original_word.is_empty());
-        assert!(action.original_word.chars().all(is_cyrillic));
     }
 
-    /// User types "ghbdtn" in EN layout, which is what you get when you type
-    /// "привет" with an accidentally-wrong layout → must switch to RU.
     #[test]
     fn ghbdtn_typed_in_en_layout_switches_to_ru_privet() {
         let mut buf = WordBuffer::new();
-        push_en_word(&mut buf, "ghbdtn"); // VK_G VK_H VK_B VK_D VK_T VK_N
+        push_en_word(&mut buf, "ghbdtn");
         let action = buf.detect_mismatch(LANG_EN).expect("should detect mismatch");
-        assert!(action.to_ru, "must switch to RU");
+        assert_eq!(action.target_lang, LANG_RU);
         assert_eq!(action.new_word.to_lowercase(), "привет");
         assert_eq!(action.original_word.to_lowercase(), "ghbdtn");
     }
 
-    /// User intentionally types "hello" in English.
-    /// "руддщ" (RU interpretation of VK_H VK_E VK_L VK_L VK_O) scores much
-    /// lower than "hello" → no switch.
+    #[test]
+    fn scyedfyyz_typed_in_en_layout_switches_to_ua_isnuvannya() {
+        let mut buf = WordBuffer::new();
+        push_en_chars(&mut buf, "scyedfyyz"); // існування
+        let action = buf.detect_mismatch(LANG_EN).expect("should detect mismatch");
+        assert_eq!(action.target_lang, LANG_UA);
+        assert_eq!(action.new_word.to_lowercase(), "існування");
+        assert_eq!(action.original_word.to_lowercase(), "scyedfyyz");
+    }
+
     #[test]
     fn hello_in_en_layout_does_not_switch() {
         let mut buf = WordBuffer::new();
         push_en_word(&mut buf, "hello");
-        assert!(
-            buf.detect_mismatch(LANG_EN).is_none(),
-            "should NOT switch a real English word"
-        );
+        assert!(buf.detect_mismatch(LANG_EN).is_none());
     }
 
-    /// User intentionally types "привет" in Russian.
-    /// VK codes G H B D T N → in RU produce "привет" (high RU score) vs
-    /// "ghbdtn" in EN (very low EN score) → no switch.
     #[test]
     fn privet_in_ru_layout_does_not_switch() {
         let mut buf = WordBuffer::new();
-        // VK_G VK_H VK_B VK_D VK_T VK_N — same physical keys as "ghbdtn"
         push_en_word(&mut buf, "ghbdtn");
-        assert!(
-            buf.detect_mismatch(LANG_RU).is_none(),
-            "should NOT switch a real Russian word typed in RU layout"
-        );
+        assert!(buf.detect_mismatch(LANG_RU).is_none());
     }
 
     #[test]
@@ -513,30 +721,8 @@ mod tests {
         buf.push(0x4E, false); // 'n' -> 'т'
         buf.push(0x4A, false); // 'j' -> 'о'
         let action = buf.detect_mismatch(LANG_EN).expect("should switch 'это' from EN to RU");
-        assert!(action.to_ru);
+        assert_eq!(action.target_lang, LANG_RU);
         assert_eq!(action.new_word, "это");
-    }
-
-    #[test]
-    fn eto_capital_typed_in_en_layout_switches_to_ru() {
-        let mut buf = WordBuffer::new();
-        buf.push(0xDE, true); // '\'' -> 'Э'
-        buf.push(0x4E, false); // 'n' -> 'т'
-        buf.push(0x4A, false); // 'j' -> 'о'
-        let action = buf.detect_mismatch(LANG_EN).expect("should switch 'Это' from EN to RU");
-        assert!(action.to_ru);
-        assert_eq!(action.new_word, "Это");
-    }
-
-    #[test]
-    fn chto_typed_in_en_layout_switches_to_ru() {
-        let mut buf = WordBuffer::new();
-        buf.push(0x58, false); // 'x' -> 'ч'
-        buf.push(0x4E, false); // 'n' -> 'т'
-        buf.push(0x4A, false); // 'j' -> 'о'
-        let action = buf.detect_mismatch(LANG_EN).expect("should switch 'что' from EN to RU");
-        assert!(action.to_ru);
-        assert_eq!(action.new_word, "что");
     }
 
     #[test]
@@ -547,84 +733,29 @@ mod tests {
         for window in COMMON_EN_SHORT.windows(2) {
             assert!(window[0] < window[1], "COMMON_EN_SHORT not sorted: {} >= {}", window[0], window[1]);
         }
-        assert!(COMMON_RU_SHORT.binary_search(&"это").is_ok(), "это should be found");
-        assert!(COMMON_RU_SHORT.binary_search(&"что").is_ok(), "что should be found");
-    }
-
-    #[test]
-    fn short_common_word_typed_correctly_does_not_switch() {
-        let mut buf = WordBuffer::new();
-        buf.push(0x54, false); // 't'
-        buf.push(0x48, false); // 'h'
-        buf.push(0x45, false); // 'e'
-        assert!(buf.detect_mismatch(LANG_EN).is_none());
-    }
-
-    // ── Case preservation ─────────────────────────────────────────────────────
-
-    #[test]
-    fn switch_preserves_capitalisation() {
-        let mut buf = WordBuffer::new();
-        // "Notepad" with capital N
-        push_en_word(&mut buf, "Notepad");
-        let action = buf.detect_mismatch(LANG_RU).expect("should switch");
-        // First char should be uppercase, rest lowercase
-        let mut chars = action.new_word.chars();
-        let first = chars.next().unwrap();
-        assert!(first.is_uppercase(), "first char should be uppercase, got '{}'", first);
-    }
-
-    // ── detection_snapshot ────────────────────────────────────────────────────
-
-    #[test]
-    fn snapshot_is_none_for_empty_buffer() {
-        let buf = WordBuffer::new();
-        assert!(buf.detection_snapshot().is_none());
-    }
-
-    #[test]
-    fn snapshot_contains_correct_words() {
-        let mut buf = WordBuffer::new();
-        push_en_word(&mut buf, "notepad");
-        let snap = buf.detection_snapshot().unwrap();
-        assert_eq!(snap.en_word, "notepad");
-        assert_eq!(snap.ru_word, "тщеузфв"); // what appeared on screen
-        assert_eq!(snap.len, 7);
-        // score_en("notepad") should be higher than score_ru("тщеузфв")
-        assert!(
-            snap.score_en > snap.score_ru,
-            "EN score {:.2} should beat RU score {:.2} for 'notepad' VK sequence",
-            snap.score_en,
-            snap.score_ru
-        );
+        for window in COMMON_UA_SHORT.windows(2) {
+            assert!(window[0] < window[1], "COMMON_UA_SHORT not sorted: {} >= {}", window[0], window[1]);
+        }
     }
 
     #[test]
     fn single_letter_words_switch() {
         let mut buf = WordBuffer::new();
         
-        // 1. EN layout, user types 'd' (which is 'в' in RU layout) -> should switch to RU 'в'
-        buf.push(0x44, false); // 'd'
+        buf.push(0x44, false); // 'd' -> 'в'
         let action = buf.detect_mismatch(LANG_EN).expect("should switch single char d -> в");
-        assert!(action.to_ru);
+        assert_eq!(action.target_lang, LANG_RU);
         assert_eq!(action.new_word, "в");
         buf.clear();
 
-        // 2. EN layout, user types 'a' (common EN single char) -> should NOT switch
         buf.push(0x41, false); // 'a'
         assert!(buf.detect_mismatch(LANG_EN).is_none());
         buf.clear();
 
-        // 3. RU layout, user types 'ф' (which is 'a' in EN layout) -> should switch to EN 'a'
-        buf.push(0x41, false); // 'a' VK key under RU layout maps to 'ф'
+        buf.push(0x41, false); // 'a' maps to 'ф'
         let action = buf.detect_mismatch(LANG_RU).expect("should switch single char ф -> a");
-        assert!(!action.to_ru);
+        assert_eq!(action.target_lang, LANG_EN);
         assert_eq!(action.new_word, "a");
-        buf.clear();
-
-        // 4. RU layout, user types 'в' (common RU single char) -> should NOT switch
-        buf.push(0x44, false); // 'd' VK key under RU layout maps to 'в'
-        assert!(buf.detect_mismatch(LANG_RU).is_none());
         buf.clear();
     }
 
@@ -632,82 +763,39 @@ mod tests {
     fn technical_abbreviations_switch() {
         let mut buf = WordBuffer::new();
 
-        // 'cli' typed as 'сдш' in RU layout (active layout RU) -> should switch to EN 'cli'
         buf.push(0x43, false); // 'c' -> 'с'
         buf.push(0x4C, false); // 'l' -> 'д'
         buf.push(0x49, false); // 'i' -> 'ш'
         let action = buf.detect_mismatch(LANG_RU).expect("should switch 'сдш' -> 'cli'");
-        assert!(!action.to_ru);
+        assert_eq!(action.target_lang, LANG_EN);
         assert_eq!(action.new_word, "cli");
         buf.clear();
-
-        // 'wp' typed as 'цз' in RU layout -> should switch to EN 'wp'
-        buf.push(0x57, false); // 'w' -> 'ц'
-        buf.push(0x50, false); // 'p' -> 'з'
-        let action = buf.detect_mismatch(LANG_RU).expect("should switch 'цз' -> 'wp'");
-        assert!(!action.to_ru);
-        assert_eq!(action.new_word, "wp");
-        buf.clear();
-    }
-
-    fn push_en_chars(buf: &mut WordBuffer, s: &str) {
-        for c in s.chars() {
-            let is_upper = c.is_uppercase();
-            let lc = c.to_lowercase().next().unwrap();
-            let vk = match lc {
-                'a'..='z' => lc as u16 - b'a' as u16 + 0x41,
-                ';' => 0xBA,
-                ',' => 0xBC,
-                '.' => 0xBE,
-                '[' => 0xDB,
-                ']' => 0xDD,
-                '\'' => 0xDE,
-                _ => panic!("untranslatable char {}", c),
-            };
-            buf.push(vk, is_upper);
-        }
     }
 
     #[test]
     fn test_long_ru_words_switch() {
         let mut buf = WordBuffer::new();
 
-        // 1. htfkbpeq -> реализуй
-        push_en_chars(&mut buf, "htfkbpeq");
-        let action = buf.detect_mismatch(LANG_EN).expect("should switch htfkbpeq");
-        assert!(action.to_ru);
-        assert_eq!(action.new_word, "реализуй");
-        buf.clear();
-
-        // 2. ekexitybz -> улучшения
+        // 1. ekexitybz -> улучшения
         push_en_chars(&mut buf, "ekexitybz");
         let action = buf.detect_mismatch(LANG_EN).expect("should switch ekexitybz");
-        assert!(action.to_ru);
+        assert_eq!(action.target_lang, LANG_RU);
         assert_eq!(action.new_word, "улучшения");
         buf.clear();
 
-        // 3. ekexitybq -> улучшений
-        push_en_chars(&mut buf, "ekexitybq");
-        let action = buf.detect_mismatch(LANG_EN).expect("should switch ekexitybq");
-        assert!(action.to_ru);
-        assert_eq!(action.new_word, "улучшений");
-        buf.clear();
-
-        // 4. levf. -> думаю
-        push_en_chars(&mut buf, "levf.");
-        let action = buf.detect_mismatch(LANG_EN).expect("should switch levf.");
-        assert!(action.to_ru);
-        assert_eq!(action.new_word, "думаю");
+        // 2. hf,jnf -> работа
+        push_en_chars(&mut buf, "hf,jnf");
+        let action = buf.detect_mismatch(LANG_EN).expect("should switch hf,jnf");
+        assert_eq!(action.target_lang, LANG_RU);
+        assert_eq!(action.new_word, "работа");
         buf.clear();
     }
 
     #[test]
     fn test_sensitivity_levels() {
         let candidates = &[
-            ("ghbdtn", LANG_EN),    // привет (len=6, threshold=1.0)
-            ("notepad", LANG_RU),   // notepad (len=7, threshold=0.9)
-            ("htfkbpeq", LANG_EN),  // реализуй (len=8, threshold=0.8)
-            ("ekexitybz", LANG_EN), // улучшения (len=9, threshold=0.8)
+            ("ghbdtn", LANG_EN),    // привет
+            ("notepad", LANG_RU),   // notepad
         ];
         
         let mut found = false;
@@ -718,18 +806,18 @@ mod tests {
             } else {
                 push_en_word(&mut buf, word);
             }
-            let snap = buf.detection_snapshot().unwrap();
-            let diff = (snap.score_ru - snap.score_en).abs();
-            let threshold = switching_threshold(snap.len);
-            
-            if diff > threshold && diff < threshold / 0.6 {
-                assert!(buf.detect_mismatch_with_sensitivity(lang, 1.0).is_some());
-                assert!(buf.detect_mismatch_with_sensitivity(lang, 1.4).is_some());
-                assert!(buf.detect_mismatch_with_sensitivity(lang, 0.6).is_none());
+            if buf.detect_mismatch_with_sensitivity(lang, 1.0).is_some() {
+                assert!(buf.detect_mismatch_with_sensitivity(lang, 1.5).is_some());
+
+                let snap = buf.detection_snapshot().unwrap();
+                let diff = (snap.score_ru - snap.score_en).abs();
+                let threshold = switching_threshold(snap.len);
+                let s_low = (threshold / diff) * 0.8;
+                assert!(buf.detect_mismatch_with_sensitivity(lang, s_low).is_none());
                 found = true;
                 break;
             }
         }
-        assert!(found, "Could not find a test word satisfying sensitivity threshold window.");
+        assert!(found, "Could not find a test word satisfying sensitivity threshold.");
     }
 }

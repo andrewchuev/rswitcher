@@ -151,3 +151,81 @@ fn exe_name_for_hwnd(hwnd: HWND) -> Option<String> {
         full_path.split('\\').next_back().map(|s| s.to_lowercase())
     }
 }
+
+pub fn is_current_process_elevated() -> bool {
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_QUERY, TOKEN_ELEVATION};
+    use windows::Win32::Foundation::HANDLE;
+
+    unsafe {
+        let mut token = HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+            return false;
+        }
+
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut return_length = 0u32;
+
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elevation as *mut _ as *mut _),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut return_length,
+        ).is_ok();
+
+        let _ = CloseHandle(token);
+
+        ok && elevation.TokenIsElevated != 0
+    }
+}
+
+pub fn is_active_window_elevated() -> bool {
+    use windows::Win32::System::Threading::{OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_QUERY, TOKEN_ELEVATION};
+    use windows::Win32::Foundation::HANDLE;
+
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return false;
+        }
+
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == 0 {
+            return false;
+        }
+
+        let process_handle = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, BOOL(0), pid) {
+            Ok(h) => h,
+            Err(_) => {
+                // If we cannot open the process, it might be elevated and we are standard.
+                return true;
+            }
+        };
+
+        let mut token = HANDLE::default();
+        if OpenProcessToken(process_handle, TOKEN_QUERY, &mut token).is_err() {
+            let _ = CloseHandle(process_handle);
+            // Opening token fails with ACCESS_DENIED if the target process is elevated and we are not.
+            return true;
+        }
+
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut return_length = 0u32;
+
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elevation as *mut _ as *mut _),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut return_length,
+        ).is_ok();
+
+        let _ = CloseHandle(token);
+        let _ = CloseHandle(process_handle);
+
+        ok && elevation.TokenIsElevated != 0
+    }
+}

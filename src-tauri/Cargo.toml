@@ -1,6 +1,6 @@
 [package]
 name = "rswitcher"
-version = "0.1.0"
+version = "0.1.1-alpha"
 edition = "2021"
 publish = false
 
@@ -26,6 +26,7 @@ features = [
     "Win32_System_Registry",
     "Win32_Security",
     "Win32_System_SystemInformation",
+    "Win32_UI_Shell",
 ]
 
 [build-dependencies]

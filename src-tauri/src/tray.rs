@@ -10,6 +10,7 @@ use windows::Win32::UI::{
 pub enum LangIcon {
     Ru,
     En,
+    Ua,
 }
 
 pub fn make_lang_icon(lang: LangIcon, dimmed: bool) -> tauri::image::Image<'static> {
@@ -17,6 +18,7 @@ pub fn make_lang_icon(lang: LangIcon, dimmed: bool) -> tauri::image::Image<'stat
     let bytes: &[u8] = match lang {
         LangIcon::Ru => include_bytes!("../../assets/ru.raw"),
         LangIcon::En => include_bytes!("../../assets/en.raw"),
+        LangIcon::Ua => include_bytes!("../../assets/ua.raw"),
     };
     let mut rgba = bytes.to_vec();
     if dimmed {
@@ -44,6 +46,7 @@ pub fn spawn_tray_watcher(app_handle: tauri::AppHandle) {
     std::thread::Builder::new()
         .name("rswitcher-tray".into())
         .spawn(move || {
+            let is_self_elevated = exceptions::is_current_process_elevated();
             let mut last_icon: Option<(LangIcon, bool)> = None;
             loop {
                 let lang_word = unsafe { foreground_lang() };
@@ -51,11 +54,13 @@ pub fn spawn_tray_watcher(app_handle: tauri::AppHandle) {
                     Some(LangIcon::Ru)
                 } else if layout::hkl_is_english(lang_word) {
                     Some(LangIcon::En)
+                } else if layout::hkl_is_ukrainian(lang_word) {
+                    Some(LangIcon::Ua)
                 } else {
                     None
                 };
 
-                let dimmed = SETTINGS
+                let is_exception = SETTINGS
                     .get()
                     .and_then(|s| s.try_read().ok())
                     .map(|s| {
@@ -65,6 +70,9 @@ pub fn spawn_tray_watcher(app_handle: tauri::AppHandle) {
                                 .unwrap_or(false)
                     })
                     .unwrap_or(false);
+
+                let is_active_elevated = !is_self_elevated && exceptions::is_active_window_elevated();
+                let dimmed = is_exception || is_active_elevated;
 
                 let new_state = new_lang.map(|l| (l, dimmed));
                 if new_state.is_some() && new_state != last_icon {

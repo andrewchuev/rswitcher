@@ -9,6 +9,17 @@ static MAP: &[(char, char)] = &[
     ('n', 'т'), ('m', 'ь'), (',', 'б'), ('.', 'ю'),
 ];
 
+/// Mapping: (EN lowercase char, UA lowercase char) for the standard Windows UA layout.
+static UA_MAP: &[(char, char)] = &[
+    ('q', 'й'), ('w', 'ц'), ('e', 'у'), ('r', 'к'), ('t', 'е'),
+    ('y', 'н'), ('u', 'г'), ('i', 'ш'), ('o', 'щ'), ('p', 'з'),
+    ('[', 'х'), (']', 'ї'),
+    ('a', 'ф'), ('s', 'і'), ('d', 'в'), ('f', 'а'), ('g', 'п'),
+    ('h', 'р'), ('j', 'о'), ('k', 'л'), ('l', 'д'), (';', 'ж'), ('\'', 'є'),
+    ('z', 'я'), ('x', 'ч'), ('c', 'с'), ('v', 'м'), ('b', 'и'),
+    ('n', 'т'), ('m', 'ь'), (',', 'б'), ('.', 'ю'), ('\\', 'ґ'),
+];
+
 pub fn en_to_ru(ch: char) -> Option<char> {
     let lower = ch.to_lowercase().next()?;
     let ru = MAP.iter().find(|&&(en, _)| en == lower)?.1;
@@ -19,6 +30,19 @@ pub fn en_to_ru(ch: char) -> Option<char> {
 pub fn ru_to_en(ch: char) -> Option<char> {
     let lower = ch.to_lowercase().next()?;
     let en = MAP.iter().find(|&&(_, ru)| ru == lower)?.0;
+    if ch.is_uppercase() { en.to_uppercase().next() } else { Some(en) }
+}
+
+pub fn en_to_ua(ch: char) -> Option<char> {
+    let lower = ch.to_lowercase().next()?;
+    let ua = UA_MAP.iter().find(|&&(en, _)| en == lower)?.1;
+    if ch.is_uppercase() { ua.to_uppercase().next() } else { Some(ua) }
+}
+
+#[cfg(test)]
+pub fn ua_to_en(ch: char) -> Option<char> {
+    let lower = ch.to_lowercase().next()?;
+    let en = UA_MAP.iter().find(|&&(_, ua)| ua == lower)?.0;
     if ch.is_uppercase() { en.to_uppercase().next() } else { Some(en) }
 }
 
@@ -36,6 +60,7 @@ pub fn vk_to_en(vk: u16, is_upper: bool) -> Option<char> {
         0xDB => '[',
         0xDD => ']',
         0xDE => '\'',
+        0xDC => '\\', // VK_OEM_5
         _ => return None,
     };
     if is_upper { base.to_uppercase().next() } else { Some(base) }
@@ -51,15 +76,33 @@ pub fn vk_to_ru(vk: u16, is_upper: bool) -> Option<char> {
         0xDB => '[',
         0xDD => ']',
         0xDE => '\'',
+        0xDC => '\\',
         _ => return None,
     };
     let ru_base = en_to_ru(en_base)?;
     if is_upper { ru_base.to_uppercase().next() } else { Some(ru_base) }
 }
 
-/// Returns `true` if the VK code corresponds to a key that has an EN↔RU mapping.
+/// Returns the UA character produced by this VK code in the Ukrainian keyboard layout.
+pub fn vk_to_ua(vk: u16, is_upper: bool) -> Option<char> {
+    let en_base: char = match vk {
+        0x41..=0x5A => (vk as u8 | 0x20) as char,
+        0xBA => ';',
+        0xBC => ',',
+        0xBE => '.',
+        0xDB => '[',
+        0xDD => ']',
+        0xDE => '\'',
+        0xDC => '\\',
+        _ => return None,
+    };
+    let ua_base = en_to_ua(en_base)?;
+    if is_upper { ua_base.to_uppercase().next() } else { Some(ua_base) }
+}
+
+/// Returns `true` if the VK code corresponds to a key that has an EN↔RU↔UA mapping.
 pub fn is_translatable_vk(vk: u16) -> bool {
-    matches!(vk, 0x41..=0x5A | 0xBA | 0xBC | 0xBE | 0xDB | 0xDD | 0xDE)
+    matches!(vk, 0x41..=0x5A | 0xBA | 0xBC | 0xBE | 0xDB | 0xDD | 0xDE | 0xDC)
 }
 
 // ── Language constants ────────────────────────────────────────────────────────
@@ -68,6 +111,8 @@ pub fn is_translatable_vk(vk: u16) -> bool {
 pub const LANG_RU: u16 = 0x0419;
 /// Windows LANGID for English (United States).
 pub const LANG_EN_US: u16 = 0x0409;
+/// Windows LANGID for Ukrainian (Ukraine).
+pub const LANG_UA: u16 = 0x0422;
 
 // ── Language detection from HKL low-word ─────────────────────────────────────
 // The low 16 bits of HKL encode the input locale identifier.
@@ -78,9 +123,12 @@ pub const LANG_EN_US: u16 = 0x0409;
 const PRIMARY_EN: u16 = 0x0009;
 /// Primary language ID for Russian.
 const PRIMARY_RU: u16 = 0x0019;
+/// Primary language ID for Ukrainian.
+const PRIMARY_UA: u16 = 0x0022;
 
 pub fn hkl_is_english(lang_word: u16) -> bool { lang_word & 0x3FF == PRIMARY_EN }
 pub fn hkl_is_russian(lang_word: u16) -> bool { lang_word & 0x3FF == PRIMARY_RU }
+pub fn hkl_is_ukrainian(lang_word: u16) -> bool { lang_word & 0x3FF == PRIMARY_UA }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
@@ -242,5 +290,27 @@ mod tests {
     fn hkl_russian() {
         assert!(hkl_is_russian(0x0419));  // ru-RU
         assert!(!hkl_is_russian(0x0409)); // en-US
+    }
+
+    #[test]
+    fn hkl_ukrainian() {
+        assert!(hkl_is_ukrainian(0x0422));  // ua-UA
+        assert!(!hkl_is_ukrainian(0x0409)); // en-US
+    }
+
+    #[test]
+    fn en_to_ua_spot_checks() {
+        assert_eq!(en_to_ua('s'), Some('і'));
+        assert_eq!(en_to_ua(']'), Some('ї'));
+        assert_eq!(en_to_ua('\''), Some('є'));
+        assert_eq!(en_to_ua('\\'), Some('ґ'));
+    }
+
+    #[test]
+    fn ua_to_en_spot_checks() {
+        assert_eq!(ua_to_en('і'), Some('s'));
+        assert_eq!(ua_to_en('ї'), Some(']'));
+        assert_eq!(ua_to_en('є'), Some('\''));
+        assert_eq!(ua_to_en('ґ'), Some('\\'));
     }
 }

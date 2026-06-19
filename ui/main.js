@@ -24,6 +24,10 @@ const devAddBtn = document.getElementById('dev-add-btn');
 const devRunningAppsSelect = document.getElementById('dev-running-apps-select');
 const ignoredWordsList = document.getElementById('ignored-words-list');
 const clearIgnoredBtn = document.getElementById('clear-ignored-btn');
+const ignoredManualInput = document.getElementById('ignored-manual-input');
+const ignoredAddBtn = document.getElementById('ignored-add-btn');
+const adminWarningBanner = document.getElementById('admin-warning-banner');
+const restartAdminBtn = document.getElementById('restart-admin-btn');
 
 // Local cached state
 let settings = null;
@@ -69,6 +73,9 @@ const translations = {
     ignoredWordsSubtitle: "words whitelisted by the Undo hotkey",
     clearIgnoredBtn: "Clear Whitelist",
     ignoredEmpty: "whitelist is empty",
+    ignoredManualPlaceholder: "word",
+    adminWarningText: "Running as standard user. RSwitcher won't work in Administrator windows.",
+    restartAdminBtn: "Restart as Admin",
     tabGeneral: "General",
     tabHotkeys: "Hotkeys",
     tabExclusions: "Exceptions"
@@ -108,6 +115,9 @@ const translations = {
     ignoredWordsSubtitle: "слова, добавленные в белый список через Отмену",
     clearIgnoredBtn: "Очистить список",
     ignoredEmpty: "список пуст",
+    ignoredManualPlaceholder: "слово",
+    adminWarningText: "Запущено с обычными правами. Переключение не работает в окнах Администратора.",
+    restartAdminBtn: "Запуск от имени Админа",
     tabGeneral: "Основные",
     tabHotkeys: "Горячие клавиши",
     tabExclusions: "Исключения"
@@ -147,6 +157,9 @@ const translations = {
     ignoredWordsSubtitle: "слова, додані до білого списку через Скасування",
     clearIgnoredBtn: "Очистити список",
     ignoredEmpty: "список порожній",
+    ignoredManualPlaceholder: "слово",
+    adminWarningText: "Запущено з обмеженими правами. Перемикач не працює у вікнах Адміністратора.",
+    restartAdminBtn: "Запустити як Адмін",
     tabGeneral: "Основні",
     tabHotkeys: "Гарячі клавіші",
     tabExclusions: "Винятки"
@@ -544,6 +557,13 @@ async function loadAllData() {
       sensitivitySelect.value = '1.0';
     }
     
+    const elevated = await invoke('is_elevated');
+    if (elevated) {
+      adminWarningBanner.style.display = 'none';
+    } else {
+      adminWarningBanner.style.display = 'flex';
+    }
+
     applyTranslations();
     await refreshRunningApps();
   } catch (err) {
@@ -636,6 +656,25 @@ async function clearIgnoredWords() {
     renderUI();
   } catch (err) {
     console.error("Failed to clear ignored words:", err);
+  }
+}
+
+async function addManualIgnoredWord() {
+  if (!settings) return;
+  const word = ignoredManualInput.value.trim().toLowerCase();
+  if (!word) return;
+  if (!settings.ignored_words.includes(word)) {
+    settings.ignored_words.push(word);
+    try {
+      const saved = await invoke('save_settings', { settings });
+      if (saved) settings = saved;
+      ignoredManualInput.value = '';
+      renderUI();
+    } catch (err) {
+      console.error("Failed to add ignored word:", err);
+    }
+  } else {
+    ignoredManualInput.value = '';
   }
 }
 
@@ -777,6 +816,14 @@ devRunningAppsSelect.addEventListener('change', async () => {
 // Whitelist clear listener
 clearIgnoredBtn.addEventListener('click', clearIgnoredWords);
 
+// Whitelist manual add listeners
+ignoredAddBtn.addEventListener('click', addManualIgnoredWord);
+ignoredManualInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    addManualIgnoredWord();
+  }
+});
+
 // Keycap Clicks (Interactive Recording)
 hotkeyDisplay.addEventListener('click', () => {
   if (settings && settings.hotkey_enabled) {
@@ -812,6 +859,15 @@ openConfigBtn.addEventListener('click', async () => {
     await invoke('open_config_dir');
   } catch (err) {
     console.error("Failed to open config directory:", err);
+  }
+});
+
+// Restart as Admin button
+restartAdminBtn.addEventListener('click', async () => {
+  try {
+    await invoke('restart_as_admin');
+  } catch (err) {
+    console.error("Failed to restart as administrator:", err);
   }
 });
 

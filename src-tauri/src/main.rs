@@ -23,6 +23,7 @@ use hook::start_hook_thread;
 use commands::{
     get_settings, save_settings, get_running_apps, open_config_dir,
     add_exception, remove_exception, set_enabled, set_autostart, is_autostart_enabled,
+    is_elevated, restart_as_admin,
 };
 
 fn is_position_visible(x: i32, y: i32, app: &tauri::App) -> bool {
@@ -214,7 +215,9 @@ fn main() {
             remove_exception,
             set_enabled,
             set_autostart,
-            is_autostart_enabled
+            is_autostart_enabled,
+            is_elevated,
+            restart_as_admin
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

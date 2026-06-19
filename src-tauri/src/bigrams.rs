@@ -27,6 +27,78 @@ pub fn score_ru(word: &str) -> f32 {
     score(word, &RU_BIGRAMS, RU_BASE, RU_N)
 }
 
+/// Log-probability score of `word` under the Ukrainian bigram model.
+pub fn score_ua(word: &str) -> f32 {
+    score_mapped(word, &UA_BIGRAMS, 33, char_to_ua_index)
+}
+
+fn char_to_ua_index(c: char) -> Option<usize> {
+    match c {
+        'а' => Some(0),
+        'б' => Some(1),
+        'в' => Some(2),
+        'г' => Some(3),
+        'ґ' => Some(4),
+        'д' => Some(5),
+        'е' => Some(6),
+        'є' => Some(7),
+        'ж' => Some(8),
+        'з' => Some(9),
+        'и' => Some(10),
+        'і' => Some(11),
+        'ї' => Some(12),
+        'й' => Some(13),
+        'к' => Some(14),
+        'л' => Some(15),
+        'м' => Some(16),
+        'н' => Some(17),
+        'о' => Some(18),
+        'п' => Some(19),
+        'р' => Some(20),
+        'с' => Some(21),
+        'т' => Some(22),
+        'у' => Some(23),
+        'ф' => Some(24),
+        'х' => Some(25),
+        'ц' => Some(26),
+        'ч' => Some(27),
+        'ш' => Some(28),
+        'щ' => Some(29),
+        'ь' => Some(30),
+        'ю' => Some(31),
+        'я' => Some(32),
+        _ => None,
+    }
+}
+
+pub(crate) fn score_mapped(word: &str, table: &[f32], n: usize, char_map: impl Fn(char) -> Option<usize>) -> f32 {
+    let chars: Vec<Option<usize>> = word
+        .chars()
+        .map(|c| {
+            c.to_lowercase().next().and_then(|lc| char_map(lc))
+        })
+        .collect();
+
+    let valid_count = chars.iter().filter(|c| c.is_some()).count();
+    if valid_count < 2 {
+        return f32::NEG_INFINITY;
+    }
+
+    let penalty_ln = -10.0f32;
+
+    let sum: f32 = chars
+        .windows(2)
+        .map(|w| {
+            match (w[0], w[1]) {
+                (Some(c1), Some(c2)) => table[c1 * n + c2].ln(),
+                _ => penalty_ln,
+            }
+        })
+        .sum();
+
+    sum / (chars.len() - 1) as f32
+}
+
 pub(crate) fn score(word: &str, table: &[f32], base: u32, n: u32) -> f32 {
     let chars: Vec<Option<u32>> = word
         .chars()

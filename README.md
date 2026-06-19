@@ -2,14 +2,14 @@
 
 A lightweight, modern, and automatic keyboard-layout switcher for Windows 10 & 11, built using Rust and Tauri v2.
 
-Automatically detects when text is typed in the wrong keyboard layout (EN↔RU) and fixes it in-place — no full-screen popups, no cloud sync, no telemetry. It runs quietly in the system tray and features a premium dark-themed settings panel organized with tabs.
+Automatically detects when text is typed in the wrong keyboard layout (EN↔RU↔UA) and fixes it in-place — no full-screen popups, no cloud sync, no telemetry. It runs quietly in the system tray and features a premium dark-themed settings panel organized with tabs.
 
 ---
 
 ## Features
 
-- **Auto-switching** — detects mismatched layout at word boundaries (Space / Enter / Tab) using a bigram statistical language model.
-- **Dictionary Guard** — compile-time generated list of the top 3000 most common words in English and Russian (length $\ge 4$). Correctly typed common words are immune to layout switching, eliminating false-positive switches.
+- **Auto-switching** — detects mismatched layout at word boundaries (Space / Enter / Tab) using a bigram statistical language model (EN↔RU↔UA).
+- **Dictionary Guard** — compile-time generated list of the top 3000 most common words in English, Russian, and Ukrainian (length $\ge 4$). Correctly typed common words are immune to layout switching, eliminating false-positive switches.
 - **Undo Feedback Whitelist** — if you immediately undo an automatic layout switch, the application automatically whitelists that word (`ignored_words` configuration) and avoids switching it again.
 - **App-Specific Contexts (Developer Exceptions)** — custom sensitivity filters for IDEs, text editors, and terminals (e.g. `code.exe`, `windowsterminal.exe`). Inside these apps, the minimum word length to trigger auto-switching is raised to 5 and the sensitivity threshold is scaled by 1.5x.
 - **Selection-Based Word Deletion** — optional setting (`use_selection_replace`) to replace text by simulating `Ctrl+Shift+Left` and `Backspace` instead of sending multiple sequential `Backspace` keystrokes.
@@ -22,7 +22,7 @@ Automatically detects when text is typed in the wrong keyboard layout (EN↔RU) 
 ## Requirements
 
 - Windows 10 / 11 (x86-64)
-- Russian and English keyboard layouts installed
+- English, Russian, and Ukrainian keyboard layouts installed
 
 ---
 
@@ -69,9 +69,14 @@ Hotkey virtual key codes can be customized by editing `%APPDATA%\rswitcher\confi
 ```
 rswitcher
 ├── Cargo.toml            — root workspace configuration
+├── assets/
+│   ├── en.raw            — English flag tray icon (32x32 RGBA)
+│   ├── ru.raw            — Russian flag tray icon (32x32 RGBA)
+│   └── ua.raw            — Ukrainian flag tray icon (32x32 RGBA)
 ├── corpus/
 │   ├── en.txt            — English training corpus (~700 words)
-│   └── ru.txt            — Russian training corpus (~700 words)
+│   ├── ru.txt            — Russian training corpus (~700 words)
+│   └── ua.txt            — Ukrainian training corpus (~1.1MB, clean Wikipedia articles)
 ├── ui/                   — frontend web assets (HTML/CSS/JS)
 │   ├── index.html        — tabbed settings panel layout
 │   ├── style.css         — glassmorphic style design & animations
@@ -86,7 +91,7 @@ rswitcher
         ├── main.rs       — backend entry point, tray icon builder, IPC commands, panic hook
         ├── buffer.rs     — WordBuffer: VK-code accumulation & mismatch detection
         ├── bigrams.rs    — bigram scoring (includes generated tables from OUT_DIR)
-        ├── layout.rs     — EN↔RU VK-code / character mapping, HKL language detection
+        ├── layout.rs     — EN↔RU↔UA VK-code / character mapping, HKL language detection
         ├── switcher.rs   — SendInput sequences: backspace / selection + re-inject + layout change
         ├── settings.rs   — Settings struct, JSON load/save persistence
         ├── logger.rs     — per-launch log file with absolute local timestamps & thread names
@@ -117,8 +122,8 @@ main thread (Tauri v2 / WebView2 runtime)
 
 1. **Buffer** — the hook records every physical key-down as a `(vk: u16, is_upper: bool)` pair in a thread-local `WordBuffer`.
 2. **Boundary** — on Space / Enter / Tab / non-translatable key, the buffer is evaluated.
-3. **Translate** — all buffered VK codes are mapped through both the EN and RU layout tables to produce two candidate strings.
-4. **Dictionary Check** — checks if the candidate is in the common word dictionary (`EN_COMMON_WORDS` or `RU_COMMON_WORDS`) or user whitelist (`ignored_words`). If yes, layout switching is bypassed.
+3. **Translate** — all buffered VK codes are mapped through EN, RU, and UA layout tables to produce candidate strings.
+4. **Dictionary Check** — checks if the candidate is in the common word dictionary (`EN_COMMON_WORDS`, `RU_COMMON_WORDS`, or `UA_COMMON_WORDS`) or user whitelist (`ignored_words`). If yes, layout switching is bypassed.
 5. **Context Check** — if the active window matches developer exceptions (`dev_exceptions`):
    - Minimum switching length is raised from 4 to 5 characters.
    - Sensitivity threshold required to trigger a switch is multiplied by 1.5x.
@@ -127,7 +132,7 @@ main thread (Tauri v2 / WebView2 runtime)
    score = Σ ln P(cₙ | cₙ₋₁)  /  (len - 1)
    ```
    The bigram probability tables are built at compile time from `corpus/*.txt` with Laplace (add-1) smoothing.
-7. **Decide** — a switch is proposed only when the alternative language scores better than the threshold.
+7. **Decide** — if the active layout is Russian or Ukrainian, a switch to English is proposed if the English candidate scores better than the threshold. If the active layout is English, both Russian and Ukrainian candidates are scored and compared, and the best-scoring candidate that also beats the threshold is selected.
 8. **Execute** — `switcher::perform_switch` deletes the word (using standard Backspaces or selection-based highlights), re-injects the corrected word as `KEYEVENTF_UNICODE` events, then posts `WM_INPUTLANGCHANGEREQUEST` to switch the active layout.
 9. **Undo Whitelist** — pressing the Undo hotkey restores the original word and appends it to `ignored_words` on a background thread.
 
@@ -164,10 +169,11 @@ Each run creates a file `%APPDATA%\rswitcher\logs\rswitcher_<unix>_<pid>.log`. E
 ```
 [2026-06-19 21:56:15.519] [  0:00.000] [main] [INFO] === RSwitcher started (pid=1234, path="C:\\Program Files\\RSwitcher\\rswitcher.exe") ===
 [2026-06-19 21:56:15.525] [  0:00.006] [main] [INFO] OS: Windows 11 Pro (Build 22631)
-[2026-06-19 21:56:15.530] [  0:00.011] [main] [INFO] Active keyboard layouts: [0x0409 (English), 0x0419 (Russian)]
+[2026-06-19 21:56:15.530] [  0:00.011] [main] [INFO] Active keyboard layouts: [0x0409 (English), 0x0419 (Russian), 0x0422 (Ukrainian)]
 [2026-06-19 21:56:15.535] [  0:00.016] [main] [INFO] settings: enabled=true exceptions=["windowsterminal.exe"] dev_exceptions=["code.exe"] ignored_words_count=0 sensitivity=1.0 use_selection_replace=false
-[2026-06-19 21:57:44.846] [  1:29.327] [rswitcher-hook] [INFO] [DETECT] lang=0x0409 en="ghbdtn" ru="привет" score_en=-7.29 score_ru=-5.21 diff=-2.08 → SWITCH_EN→RU
-[2026-06-19 21:58:33.626] [  2:18.107] [rswitcher-hook] [INFO] [DETECT] lang=0x0419 en="hello" ru="руддщ" score_en=-5.28 score_ru=-7.11 diff=+1.82 → SWITCH_RU→EN
+[2026-06-19 21:57:44.846] [  1:29.327] [rswitcher-hook] [INFO] [DETECT] lang=0x0409 en="ghbdtn" ru="привет" ua="гривдн" score_en=-7.29 score_ru=-5.21 score_ua=-9.30 → SWITCH_EN→RU boundary=0x20
+[2026-06-19 21:57:55.120] [  1:39.601] [rswitcher-hook] [INFO] [DETECT] lang=0x0409 en="scyedfyyz" ru="сыудукыннз" ua="існування" score_en=-8.45 score_ru=-12.30 score_ua=-4.12 → SWITCH_EN→UA boundary=0x20
+[2026-06-19 21:58:33.626] [  2:18.107] [rswitcher-hook] [INFO] [DETECT] lang=0x0419 en="hello" ru="руддщ" ua="рллли" score_en=-5.28 score_ru=-7.11 score_ua=-8.92 → SWITCH_RU→EN boundary=0x20
 [2026-06-19 21:59:23.978] [  3:08.459] [main] [INFO] === RSwitcher quit via tray menu ===
 ```
 

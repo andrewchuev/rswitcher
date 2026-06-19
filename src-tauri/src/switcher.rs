@@ -16,7 +16,6 @@ use windows::Win32::{
 };
 
 use crate::buffer::SwitchAction;
-use crate::layout::{LANG_EN_US, LANG_RU};
 
 /// Execute the complete switch sequence in one atomic `SendInput` call:
 ///
@@ -86,7 +85,7 @@ pub fn perform_switch(action: &SwitchAction, boundary_vk: Option<VIRTUAL_KEY>) {
         // Ask the foreground window to update its layout indicator.
         let hwnd = GetForegroundWindow();
         if !hwnd.0.is_null() {
-            let lang = if action.to_ru { LANG_RU } else { LANG_EN_US };
+            let lang = action.target_lang;
             if let Some(hkl) = find_hkl(lang) {
                 // HKL is *mut c_void; cast to isize to fit LPARAM.
                 PostMessageW(

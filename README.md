@@ -16,6 +16,8 @@ Automatically detects when text is typed in the wrong keyboard layout (EN↔RU�
 - **Tabs Settings Panel** — a beautiful, responsive, and organized settings window categorized into **General**, **Hotkeys**, and **Exceptions** for easy configuration.
 - **Official Tauri v2 Plugins** — native single-instance mutex handling and platform folder opening via `tauri-plugin-single-instance` and `tauri-plugin-opener`.
 - **System Diagnostics Logging** — outputs local absolute timestamps, thread labels, OS version (via registry), active keyboard layout codes, and registers a custom panic hook to write fatal panics and backtraces to disk. The logs folder is protected by a 50 MB maximum size quota.
+- **Panic-safe FFI hooks** — keyboard and mouse hook callbacks are wrapped in `catch_unwind` so a Rust panic can never cross the `extern "system"` boundary (undefined behaviour); on panic the event is forwarded unchanged and typing continues uninterrupted.
+- **Atomic config persistence** — settings are written via a background worker (`rswitcher-persist`) that coalesces burst saves and uses a write-to-temp-then-rename strategy, guaranteeing `config.json` is never partially written even when the hook thread and IPC commands save concurrently.
 
 ---
 
@@ -88,12 +90,12 @@ rswitcher
     ├── capabilities/
     │   └── default.json  — window API permissions manifest
     └── src/
-        ├── main.rs       — backend entry point, tray icon builder, IPC commands, panic hook
+        ├── main.rs       — backend entry point, tray icon builder, IPC commands, persistence init
         ├── buffer.rs     — WordBuffer: VK-code accumulation & mismatch detection
         ├── bigrams.rs    — bigram scoring (includes generated tables from OUT_DIR)
         ├── layout.rs     — EN↔RU↔UA VK-code / character mapping, HKL language detection
         ├── switcher.rs   — SendInput sequences: backspace / selection + re-inject + layout change
-        ├── settings.rs   — Settings struct, JSON load/save persistence
+        ├── settings.rs   — Settings struct, atomic JSON persistence, background save worker
         ├── logger.rs     — per-launch log file with absolute local timestamps & thread names
         ├── exceptions.rs — process name cache for exclusion checks
         └── autostart.rs  — Windows Registry autostart entry helper
@@ -108,10 +110,17 @@ main thread (Tauri v2 / WebView2 runtime)
 │   • Listens to frontend requests via Tauri IPC Commands
 │
 ├── rswitcher-hook  (Win32 message loop)
-│   • Installs WH_KEYBOARD_LL global keyboard hook
+│   • Installs WH_KEYBOARD_LL + WH_MOUSE_LL global hooks
+│   • Callbacks are protected by catch_unwind — panic never crosses FFI boundary
 │   • Calls process_key() on every physical key-down event
-│   • Owns WORD_BUF and UNDO thread-locals
+│   • Owns WORD_BUF, PREV_WORD_BUF, UNDO and LAST_HWND thread-locals
 │   • Calls switcher::perform_switch() → SendInput
+│   • Routes hot-path saves through save_async() — never blocks on disk I/O
+│
+├── rswitcher-persist  (config persistence worker)
+│   • Receives Settings via mpsc::channel from any thread
+│   • Coalesces burst saves; only writes the latest snapshot
+│   • Writes atomically: temp file + rename (FILE_LOCK guarantees serialisation)
 │
 └── rswitcher-tray  (background language watcher, 100 ms sleep)
     • Polls the foreground window's HKL layout state
@@ -134,7 +143,7 @@ main thread (Tauri v2 / WebView2 runtime)
    The bigram probability tables are built at compile time from `corpus/*.txt` with Laplace (add-1) smoothing.
 7. **Decide** — if the active layout is Russian or Ukrainian, a switch to English is proposed if the English candidate scores better than the threshold. If the active layout is English, both Russian and Ukrainian candidates are scored and compared, and the best-scoring candidate that also beats the threshold is selected.
 8. **Execute** — `switcher::perform_switch` deletes the word (using standard Backspaces or selection-based highlights), re-injects the corrected word as `KEYEVENTF_UNICODE` events, then posts `WM_INPUTLANGCHANGEREQUEST` to switch the active layout.
-9. **Undo Whitelist** — pressing the Undo hotkey restores the original word and appends it to `ignored_words` on a background thread.
+9. **Undo Whitelist** — pressing the Undo hotkey restores the original word and asynchronously appends it to `ignored_words` via the persistence worker.
 
 ---
 

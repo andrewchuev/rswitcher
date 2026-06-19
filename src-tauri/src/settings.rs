@@ -1,6 +1,6 @@
 use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
+use crate::log_error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -31,6 +31,10 @@ pub struct Settings {
     pub undo_hotkey_win: bool,
     #[serde(default = "default_lang")]
     pub lang: String,
+    
+    #[serde(default = "default_sensitivity")]
+    pub sensitivity: f32,
+
     #[serde(default)]
     pub window_x: Option<i32>,
     #[serde(default)]
@@ -53,6 +57,7 @@ impl Default for Settings {
             undo_hotkey_vk: 0x08, // VK_BACK
             undo_hotkey_win: true,
             lang: "en".to_string(),
+            sensitivity: 1.0,
             window_x: None,
             window_y: None,
             window_width: None,
@@ -65,6 +70,7 @@ fn bool_true() -> bool { true }
 fn default_hotkey_vk() -> u16 { 0x10 }
 fn default_undo_hotkey_vk() -> u16 { 0x08 }
 fn default_lang() -> String { "en".to_string() }
+fn default_sensitivity() -> f32 { 1.0 }
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 
@@ -74,18 +80,40 @@ pub fn config_path() -> PathBuf {
 }
 
 pub fn load() -> Settings {
-    std::fs::read_to_string(config_path())
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+    let path = config_path();
+    match std::fs::read_to_string(&path) {
+        Ok(s) => match serde_json::from_str(&s) {
+            Ok(settings) => settings,
+            Err(e) => {
+                log_error!("Failed to parse config file: {:?}. Using defaults.", e);
+                Settings::default()
+            }
+        },
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log_error!("Failed to read config file: {:?}. Using defaults.", e);
+            }
+            Settings::default()
+        }
+    }
 }
 
 pub fn save(s: &Settings) {
     let path = config_path();
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            log_error!("Failed to create config directory: {:?}", e);
+            return;
+        }
     }
-    if let Ok(json) = serde_json::to_string_pretty(s) {
-        let _ = std::fs::write(&path, json);
+    match serde_json::to_string_pretty(s) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&path, json) {
+                log_error!("Failed to write config file: {:?}", e);
+            }
+        }
+        Err(e) => {
+            log_error!("Failed to serialize settings: {:?}", e);
+        }
     }
 }

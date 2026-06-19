@@ -46,8 +46,12 @@ pub fn perform_switch(action: &SwitchAction, boundary_vk: Option<VIRTUAL_KEY>) {
 
     // ── 2. Re-type ───────────────────────────────────────────────────────────
     for ch in action.new_word.chars() {
-        inputs.push(make_unicode(ch, KEYBD_EVENT_FLAGS(0)));
-        inputs.push(make_unicode(ch, KEYEVENTF_KEYUP));
+        let mut buf = [0u16; 2];
+        let units = ch.encode_utf16(&mut buf);
+        for &unit in units.iter() {
+            inputs.push(make_unicode_unit(unit, KEYBD_EVENT_FLAGS(0)));
+            inputs.push(make_unicode_unit(unit, KEYEVENTF_KEYUP));
+        }
     }
 
     // ── 3. Re-inject the word-boundary key ───────────────────────────────────
@@ -129,7 +133,7 @@ fn make_vk(vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> INPUT {
     }
 }
 
-fn make_unicode(ch: char, flags: KEYBD_EVENT_FLAGS) -> INPUT {
+fn make_unicode_unit(unit: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
@@ -137,7 +141,7 @@ fn make_unicode(ch: char, flags: KEYBD_EVENT_FLAGS) -> INPUT {
                 // wVk must be 0 when KEYEVENTF_UNICODE is set.
                 wVk:         VIRTUAL_KEY(0),
                 // wScan carries the UTF-16 code unit.
-                wScan:       ch as u16,
+                wScan:       unit,
                 dwFlags:     KEYEVENTF_UNICODE | flags,
                 time:        0,
                 dwExtraInfo: 0,

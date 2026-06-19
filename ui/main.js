@@ -13,6 +13,7 @@ const undoHotkeyToggle = document.getElementById('undo-hotkey-toggle');
 const undoHotkeyDisplay = document.getElementById('undo-hotkey-display');
 const autostartToggle = document.getElementById('autostart-toggle');
 const langSelect = document.getElementById('lang-select');
+const sensitivitySelect = document.getElementById('sensitivity-select');
 const openConfigBtn = document.getElementById('open-config-btn');
 
 // Local cached state
@@ -46,7 +47,11 @@ const translations = {
     footerNote: "Settings are saved automatically.",
     openConfigBtn: "Open Config",
     noRunningApps: "No running windows",
-    alreadyAddedSuffix: " (added)"
+    alreadyAddedSuffix: " (added)",
+    sensitivityLabel: "Sensitivity:",
+    sensitivityLow: "Low",
+    sensitivityMedium: "Medium",
+    sensitivityHigh: "High"
   },
   ru: {
     title: "RSwitcher — Настройки",
@@ -70,7 +75,11 @@ const translations = {
     footerNote: "Настройки сохраняются автоматически.",
     openConfigBtn: "Открыть конфиг",
     noRunningApps: "Нет запущенных окон",
-    alreadyAddedSuffix: " (добавлено)"
+    alreadyAddedSuffix: " (добавлено)",
+    sensitivityLabel: "Чувствительность:",
+    sensitivityLow: "Низкая",
+    sensitivityMedium: "Средняя",
+    sensitivityHigh: "Высокая"
   },
   uk: {
     title: "RSwitcher — Налаштування",
@@ -94,7 +103,11 @@ const translations = {
     footerNote: "Налаштування зберігаються автоматично.",
     openConfigBtn: "Відкрити конфіг",
     noRunningApps: "Немає запущених вікон",
-    alreadyAddedSuffix: " (додано)"
+    alreadyAddedSuffix: " (додано)",
+    sensitivityLabel: "Чутливість:",
+    sensitivityLow: "Низька",
+    sensitivityMedium: "Середня",
+    sensitivityHigh: "Висока"
   }
 };
 
@@ -413,6 +426,12 @@ async function loadAllData() {
       langSelect.value = 'en';
     }
     
+    if (settings && settings.sensitivity !== undefined) {
+      sensitivitySelect.value = settings.sensitivity.toFixed(1);
+    } else {
+      sensitivitySelect.value = '1.0';
+    }
+    
     applyTranslations();
     await refreshRunningApps();
   } catch (err) {
@@ -536,6 +555,18 @@ langSelect.addEventListener('change', async () => {
   }
 });
 
+// Sensitivity Select Dropdown
+sensitivitySelect.addEventListener('change', async () => {
+  if (!settings) return;
+  settings.sensitivity = parseFloat(sensitivitySelect.value);
+  try {
+    const saved = await invoke('save_settings', { settings });
+    if (saved) settings = saved;
+  } catch (err) {
+    console.error("Failed to save sensitivity settings:", err);
+  }
+});
+
 // Keycap Clicks (Interactive Recording)
 hotkeyDisplay.addEventListener('click', () => {
   if (settings && settings.hotkey_enabled) {
@@ -549,6 +580,22 @@ undoHotkeyDisplay.addEventListener('click', () => {
   }
 });
 
+let pollIntervalId = null;
+
+function startPolling() {
+  if (!pollIntervalId) {
+    refreshRunningApps();
+    pollIntervalId = setInterval(refreshRunningApps, 3000);
+  }
+}
+
+function stopPolling() {
+  if (pollIntervalId) {
+    clearInterval(pollIntervalId);
+    pollIntervalId = null;
+  }
+}
+
 // Open Config button
 openConfigBtn.addEventListener('click', async () => {
   try {
@@ -561,6 +608,14 @@ openConfigBtn.addEventListener('click', async () => {
 // ── Initialization ─────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   loadAllData();
-  // Poll running apps list every 3 seconds
-  setInterval(refreshRunningApps, 3000);
+  
+  // Poll running apps list only when the window has focus to save CPU/battery
+  if (document.hasFocus()) {
+    startPolling();
+  }
+  window.addEventListener('focus', startPolling);
+  window.addEventListener('blur', stopPolling);
+  
+  // Refresh immediately when the dropdown gains focus
+  runningAppsSelect.addEventListener('focus', refreshRunningApps);
 });

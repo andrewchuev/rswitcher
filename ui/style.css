@@ -400,7 +400,8 @@ select:focus {
   font-size: 12px;
 }
 
-.lang-select-container {
+.lang-select-container,
+.sensitivity-select-container {
   width: 120px;
 }
 

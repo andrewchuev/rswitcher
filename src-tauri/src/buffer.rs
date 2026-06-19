@@ -138,8 +138,13 @@ impl WordBuffer {
     /// Short words (2-3 chars) are matched against a high-frequency dictionary.
     ///
     /// `active_lang` is the low 16-bit word of the foreground window's HKL.
+    #[allow(dead_code)]
     pub fn detect_mismatch(&self, active_lang: u16) -> Option<SwitchAction> {
-        self.detect_impl(active_lang)
+        self.detect_impl(active_lang, 1.0)
+    }
+
+    pub fn detect_mismatch_with_sensitivity(&self, active_lang: u16, sensitivity: f32) -> Option<SwitchAction> {
+        self.detect_impl(active_lang, sensitivity)
     }
 
     /// Hotkey forced switch (requires >= 1 buffered key).
@@ -187,7 +192,7 @@ impl WordBuffer {
         }
     }
 
-    fn detect_impl(&self, active_lang: u16) -> Option<SwitchAction> {
+    fn detect_impl(&self, active_lang: u16, sensitivity: f32) -> Option<SwitchAction> {
         let len = self.entries.len();
         if len == 0 {
             return None;
@@ -225,15 +230,16 @@ impl WordBuffer {
                         original_word: ru,
                     });
                 }
-            } else if layout::hkl_is_english(active_lang) {
-                if !common_en_single.contains(&en_lower.as_str()) && common_ru_single.contains(&ru_lower.as_str()) {
-                    return Some(SwitchAction {
-                        backspaces: len,
-                        new_word: ru,
-                        to_ru: true,
-                        original_word: en,
-                    });
-                }
+            } else if layout::hkl_is_english(active_lang)
+                && !common_en_single.contains(&en_lower.as_str())
+                && common_ru_single.contains(&ru_lower.as_str())
+            {
+                return Some(SwitchAction {
+                    backspaces: len,
+                    new_word: ru,
+                    to_ru: true,
+                    original_word: en,
+                });
             }
             return None;
         }
@@ -281,7 +287,7 @@ impl WordBuffer {
                 return None;
             }
             // Propose switching to EN only when EN is significantly more plausible.
-            if score_en - score_ru > switching_threshold(len) {
+            if score_en - score_ru > switching_threshold(len) / sensitivity {
                 return Some(SwitchAction {
                     backspaces: len,
                     new_word: en,
@@ -298,7 +304,7 @@ impl WordBuffer {
                 return None;
             }
             // Propose switching to RU only when RU is significantly more plausible.
-            if score_ru - score_en > switching_threshold(len) {
+            if score_ru - score_en > switching_threshold(len) / sensitivity {
                 return Some(SwitchAction {
                     backspaces: len,
                     new_word: ru,
@@ -651,5 +657,37 @@ mod tests {
         assert!(action.to_ru);
         assert_eq!(action.new_word, "думаю");
         buf.clear();
+    }
+
+    #[test]
+    fn test_sensitivity_levels() {
+        let candidates = &[
+            ("ghbdtn", LANG_EN),    // привет (len=6, threshold=1.0)
+            ("notepad", LANG_RU),   // notepad (len=7, threshold=0.9)
+            ("htfkbpeq", LANG_EN),  // реализуй (len=8, threshold=0.8)
+            ("ekexitybz", LANG_EN), // улучшения (len=9, threshold=0.8)
+        ];
+        
+        let mut found = false;
+        for &(word, lang) in candidates {
+            let mut buf = WordBuffer::new();
+            if lang == LANG_EN {
+                push_en_chars(&mut buf, word);
+            } else {
+                push_en_word(&mut buf, word);
+            }
+            let snap = buf.detection_snapshot().unwrap();
+            let diff = (snap.score_ru - snap.score_en).abs();
+            let threshold = switching_threshold(snap.len);
+            
+            if diff > threshold && diff < threshold / 0.6 {
+                assert!(buf.detect_mismatch_with_sensitivity(lang, 1.0).is_some());
+                assert!(buf.detect_mismatch_with_sensitivity(lang, 1.4).is_some());
+                assert!(buf.detect_mismatch_with_sensitivity(lang, 0.6).is_none());
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "Could not find a test word satisfying sensitivity threshold window.");
     }
 }

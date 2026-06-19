@@ -46,7 +46,26 @@ struct UndoState {
     boundary_vk: Option<VIRTUAL_KEY>,
 }
 
+/// Windows calls this on the hook thread for every low-level keyboard event.
+/// A panic unwinding across this `extern "system"` FFI boundary is undefined
+/// behavior, so the real work happens in `hook_proc_inner` wrapped in
+/// `catch_unwind`.  On panic we fall through to `CallNextHookEx`, keeping the
+/// app (and the user's typing) alive; the panic hook still logs the backtrace.
 unsafe extern "system" fn hook_proc(
+    n_code: i32,
+    w_param: WPARAM,
+    l_param: LPARAM,
+) -> LRESULT {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        hook_proc_inner(n_code, w_param, l_param)
+    }));
+    match result {
+        Ok(lresult) => lresult,
+        Err(_) => CallNextHookEx(None, n_code, w_param, l_param),
+    }
+}
+
+unsafe fn hook_proc_inner(
     n_code: i32,
     w_param: WPARAM,
     l_param: LPARAM,
@@ -217,10 +236,7 @@ unsafe fn process_key(
                         if let Ok(mut settings) = settings_arc.write() {
                             if !settings.ignored_words.contains(&word_to_ignore) {
                                 settings.ignored_words.push(word_to_ignore.clone());
-                                let settings_to_save = settings.clone();
-                                std::thread::spawn(move || {
-                                    crate::settings::save(&settings_to_save);
-                                });
+                                crate::settings::save_async(&settings);
                                 log_info!("[UNDO] Added '{}' to ignored_words whitelist", word_to_ignore);
                             }
                         }
@@ -382,10 +398,7 @@ unsafe fn process_key(
                                             if let Ok(mut settings) = settings_arc.write() {
                                                 if !settings.ignored_words.contains(&word) {
                                                     settings.ignored_words.push(word.clone());
-                                                    let settings_to_save = settings.clone();
-                                                    std::thread::spawn(move || {
-                                                        crate::settings::save(&settings_to_save);
-                                                    });
+                                                    crate::settings::save_async(&settings);
                                                     log_info!("[ADAPTIVE] Added '{}' to ignored_words whitelist (typed 3 times)", word);
                                                 }
                                             }
@@ -506,6 +519,20 @@ fn save_undo(action: &buffer::SwitchAction, boundary_vk: Option<VIRTUAL_KEY>, or
 }
 
 unsafe extern "system" fn mouse_hook_proc(
+    n_code: i32,
+    w_param: WPARAM,
+    l_param: LPARAM,
+) -> LRESULT {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        mouse_hook_proc_inner(n_code, w_param, l_param)
+    }));
+    match result {
+        Ok(lresult) => lresult,
+        Err(_) => CallNextHookEx(None, n_code, w_param, l_param),
+    }
+}
+
+unsafe fn mouse_hook_proc_inner(
     n_code: i32,
     w_param: WPARAM,
     l_param: LPARAM,

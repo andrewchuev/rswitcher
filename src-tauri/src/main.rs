@@ -52,6 +52,10 @@ fn main() {
         .set(Arc::clone(&settings))
         .expect("SETTINGS already initialised");
 
+    // Start the persistence worker so hot-path saves (keyboard hook) never
+    // block on disk I/O and all writes are serialised atomically.
+    settings::init_persistence();
+
     {
         let s = settings.read().unwrap();
         log_info!(

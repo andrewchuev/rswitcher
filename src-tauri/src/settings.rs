@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::{mpsc, Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
 use crate::log_error;
 
@@ -130,6 +131,50 @@ pub fn load() -> Settings {
     }
 }
 
+/// Serializes all writes to `config.json` so concurrent saves from the hook
+/// thread, IPC commands, and window events can never interleave on disk.
+static FILE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Channel to the background persistence worker.  Lets the hot path (the
+/// keyboard hook) request a save without blocking on disk I/O and without
+/// spawning a fresh thread per keystroke.
+static SAVE_TX: OnceLock<mpsc::Sender<Settings>> = OnceLock::new();
+
+/// Spawn the persistence worker.  Must be called once from `main()` after
+/// `SETTINGS` is initialised and before the hook thread starts.
+pub fn init_persistence() {
+    let (tx, rx) = mpsc::channel::<Settings>();
+    if SAVE_TX.set(tx).is_err() {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("rswitcher-persist".into())
+        .spawn(move || {
+            // Coalesce bursts: block for one request, then drain any queued
+            // requests and persist only the most recent state.
+            while let Ok(mut latest) = rx.recv() {
+                while let Ok(newer) = rx.try_recv() {
+                    latest = newer;
+                }
+                save(&latest);
+            }
+        });
+}
+
+/// Request an asynchronous save from the hot path (keyboard hook).  Never
+/// blocks on disk I/O.  Falls back to a synchronous save if the worker is not
+/// running yet.
+pub fn save_async(s: &Settings) {
+    match SAVE_TX.get() {
+        Some(tx) => {
+            let _ = tx.send(s.clone());
+        }
+        None => save(s),
+    }
+}
+
+/// Persist settings to disk atomically (write to a temp file, then rename over
+/// the target), serialised through `FILE_LOCK`.  Safe to call from any thread.
 pub fn save(s: &Settings) {
     let path = config_path();
     if let Some(parent) = path.parent() {
@@ -138,14 +183,27 @@ pub fn save(s: &Settings) {
             return;
         }
     }
-    match serde_json::to_string_pretty(s) {
-        Ok(json) => {
-            if let Err(e) = std::fs::write(&path, json) {
-                log_error!("Failed to write config file: {:?}", e);
-            }
-        }
+
+    let json = match serde_json::to_string_pretty(s) {
+        Ok(json) => json,
         Err(e) => {
             log_error!("Failed to serialize settings: {:?}", e);
+            return;
         }
+    };
+
+    // Recover from a poisoned lock: the protected data is just the filesystem,
+    // so a previous panic mid-write does not leave shared state inconsistent.
+    let _guard = FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let tmp = path.with_extension("json.tmp");
+    if let Err(e) = std::fs::write(&tmp, &json) {
+        log_error!("Failed to write temp config file: {:?}", e);
+        return;
+    }
+    // `std::fs::rename` replaces the destination atomically on Windows.
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        log_error!("Failed to replace config file: {:?}", e);
+        let _ = std::fs::remove_file(&tmp);
     }
 }

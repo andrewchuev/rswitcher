@@ -50,13 +50,13 @@ jobs:
         shell: pwsh
         run: |
           # Package the raw release binary as a portable version
-          Compress-Archive -Path src-tauri/target/release/rswitcher.exe -DestinationPath src-tauri/target/release/rswitcher-portable.zip
+          Compress-Archive -Path target/release/rswitcher.exe -DestinationPath target/release/rswitcher-portable.zip
 
       - name: Upload Portable Asset to Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
-          files: src-tauri/target/release/rswitcher-portable.zip
+          files: target/release/rswitcher-portable.zip
           tag_name: ${{ github.ref_name }}
           draft: true
         env:

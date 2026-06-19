@@ -54,8 +54,8 @@ Run `rswitcher.exe`. The application hides to the system tray on startup.
 | Action | Result |
 |---|---|
 | Double-click tray icon | Open settings window |
-| Right-click → **Настройки** | Open settings window |
-| Right-click → **Выход** | Quit |
+| Right-click → **Settings** (Настройки / Налаштування) | Open settings window |
+| Right-click → **Exit** (Выход / Вихід) | Quit |
 | `Win+Shift` (while typing) | Force-convert the current word |
 | `Win+Backspace` (after a switch) | Undo the last conversion |
 

@@ -3,3 +3,10 @@ members = [
     "src-tauri",
 ]
 resolver = "2"
+
+[profile.release]
+opt-level     = "z"   # optimise for size
+lto           = true  # cross-crate link-time optimisation
+codegen-units = 1     # single CU for better inlining
+strip         = true  # strip debug symbols
+

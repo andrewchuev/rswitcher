@@ -31,8 +31,4 @@ features = [
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
 
-[profile.release]
-opt-level     = "z"   # optimise for size
-lto           = true  # cross-crate link-time optimisation
-codegen-units = 1     # single CU for better inlining
-strip         = true  # strip debug symbols
+

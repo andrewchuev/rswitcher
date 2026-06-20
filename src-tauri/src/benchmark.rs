@@ -196,7 +196,7 @@ pub fn run() {
 
     // 4. English in EN layout (correct) → expect no switch
     println!("\nRunning English layout test (typing EN in EN layout)...");
-    let (en_total, en_ok, en_wrong, _en_missed, en_tb, en_otf) =
+    let (en_total, en_ok, _en_wrong, _en_missed, en_tb, en_otf) =
         simulate(&en_words, &en_map, layout::LANG_EN_US, None);
     let en_false_pos = en_total - en_ok;
 
@@ -237,7 +237,7 @@ pub fn run() {
     println!("============================================================");
     println!("detect_mismatch_with_sensitivity() — called at word boundary (Space/Enter):");
     let tb_all: Vec<Duration> = [en_tb.samples.as_slice(), ru_tb.samples.as_slice(), ua_tb.samples.as_slice()].concat();
-    let mut tb_merged = TimingStats { samples: tb_all };
+    let tb_merged = TimingStats { samples: tb_all };
     println!("  Samples:  {}", tb_merged.count());
     println!("  Mean:     {:.0} ns  ({:.3} µs)", tb_merged.mean_ns(), tb_merged.mean_ns() / 1000.0);
     println!("  Median:   {:.0} ns  ({:.3} µs)", tb_merged.median_ns(), tb_merged.median_ns() / 1000.0);
@@ -246,7 +246,7 @@ pub fn run() {
 
     println!("\ndetect_mismatch_on_the_fly() — called on every keystroke (≥5 chars):");
     let otf_all: Vec<Duration> = [en_otf.samples.as_slice(), ru_otf.samples.as_slice(), ua_otf.samples.as_slice()].concat();
-    let mut otf_merged = TimingStats { samples: otf_all };
+    let otf_merged = TimingStats { samples: otf_all };
     println!("  Samples:  {}", otf_merged.count());
     println!("  Mean:     {:.0} ns  ({:.3} µs)", otf_merged.mean_ns(), otf_merged.mean_ns() / 1000.0);
     println!("  Median:   {:.0} ns  ({:.3} µs)", otf_merged.median_ns(), otf_merged.median_ns() / 1000.0);

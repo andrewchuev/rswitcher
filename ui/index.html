@@ -1,201 +1,226 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title data-i18n="title">RSwitcher — Settings</title>
-  <!-- Outfit and Inter Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Outfit:wght@600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="app-container">
-    <!-- Admin Warning Banner -->
-    <div id="admin-warning-banner" class="admin-warning-banner" style="display: none;">
-      <span class="warning-text" data-i18n="adminWarningText">Running as standard user. RSwitcher won't work in Administrator windows.</span>
-      <button id="restart-admin-btn" class="btn btn-warning-action" data-i18n="restartAdminBtn">Restart as Admin</button>
-    </div>
+  <div class="layout">
 
-    <!-- Header -->
-    <header class="app-header">
-      <h1 class="logo">RSwitcher</h1>
-      <div class="toggle-container">
-        <span class="toggle-label" data-i18n="masterLabel">Auto-switching</span>
-        <label class="switch">
+    <!-- ── Sidebar ─────────────────────────────────────────────── -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-name">RSwitcher</span>
+        <label class="toggle-sw" title="">
           <input type="checkbox" id="master-switch">
-          <span class="slider"></span>
+          <span class="tw-track"></span>
         </label>
       </div>
-    </header>
 
-    <div class="divider"></div>
+      <nav class="sidebar-nav">
+        <a class="nav-item active" data-tab="detection">
+          <i class="ti ti-language"></i>
+          <span data-i18n="tabDetection">Detection</span>
+        </a>
+        <a class="nav-item" data-tab="hotkeys">
+          <i class="ti ti-keyboard"></i>
+          <span data-i18n="tabHotkeys">Hotkeys</span>
+        </a>
 
-    <!-- Tabs Navigation -->
-    <nav class="tabs-nav">
-      <button class="tab-btn active" data-tab="general" data-i18n="tabGeneral">General</button>
-      <button class="tab-btn" data-tab="hotkeys" data-i18n="tabHotkeys">Hotkeys</button>
-      <button class="tab-btn" data-tab="exclusions" data-i18n="tabExclusions">Exceptions</button>
-    </nav>
+        <div class="nav-sep"></div>
 
-    <!-- Main Content Area -->
-    <main class="app-content">
-      <!-- General Tab -->
-      <div class="tab-content active" id="tab-general">
-        <!-- System Group -->
-        <section class="card">
-          <div class="card-header">
-            <h2 data-i18n="systemTitle">System</h2>
+        <a class="nav-item" data-tab="words">
+          <i class="ti ti-vocabulary"></i>
+          <span data-i18n="tabWords">Ignored words</span>
+          <span class="nav-badge" id="words-badge"></span>
+        </a>
+        <a class="nav-item" data-tab="apps">
+          <i class="ti ti-apps"></i>
+          <span data-i18n="tabApps">App exclusions</span>
+          <span class="nav-badge" id="apps-badge"></span>
+        </a>
+
+        <div class="nav-sep"></div>
+
+        <a class="nav-item" data-tab="system">
+          <i class="ti ti-settings-2"></i>
+          <span data-i18n="tabSystem">System</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button class="theme-toggle" id="theme-btn">
+          <i class="ti ti-moon" id="theme-icon"></i>
+          <span id="theme-label" data-i18n="themeLight">Light</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ── Content ────────────────────────────────────────────── -->
+    <div class="content">
+
+      <!-- Detection -->
+      <div class="tab-panel active" id="panel-detection">
+        <p class="panel-title" data-i18n="detectionTitle">Language detection</p>
+        <div class="card">
+          <div class="card-row">
+            <div class="row-meta">
+              <span class="row-label" data-i18n="sensitivityLabel">Sensitivity</span>
+              <span class="row-desc" data-i18n="sensitivityDesc">How aggressively words are detected</span>
+            </div>
+            <div class="seg-control" data-group="sensitivity">
+              <button class="seg-btn" data-value="0.6" data-i18n="sensitivityLow">Low</button>
+              <button class="seg-btn" data-value="1.0" data-i18n="sensitivityMedium">Medium</button>
+              <button class="seg-btn" data-value="1.4" data-i18n="sensitivityHigh">High</button>
+            </div>
           </div>
-          <div class="system-layout">
-            <label class="checkbox-row">
+          <div class="card-row">
+            <div class="row-meta">
+              <span class="row-label" data-i18n="cyrillicLabel">Cyrillic preference</span>
+              <span class="row-desc" data-i18n="cyrillicDesc">How RU vs UA ambiguity is resolved</span>
+            </div>
+            <div class="seg-control" data-group="cyrillic">
+              <button class="seg-btn" data-value="auto" data-i18n="cyrillicAuto">Auto</button>
+              <button class="seg-btn" data-value="ru" data-i18n="cyrillicRu">Russian</button>
+              <button class="seg-btn" data-value="ua" data-i18n="cyrillicUa">Ukrainian</button>
+            </div>
+          </div>
+          <div class="card-row">
+            <div class="row-meta">
+              <span class="row-label" data-i18n="deletionLabel">Word deletion</span>
+              <span class="row-desc" data-i18n="deletionDesc">How the mistyped word is erased</span>
+            </div>
+            <div class="seg-control" data-group="deletion">
+              <button class="seg-btn" data-value="bs" data-i18n="deletionBackspace">Backspace</button>
+              <button class="seg-btn" data-value="sel" data-i18n="deletionSelect">Ctrl+Shift+←</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hotkeys -->
+      <div class="tab-panel" id="panel-hotkeys">
+        <p class="panel-title" data-i18n="hotkeysTitle">Hotkeys</p>
+        <div class="card">
+          <div class="card-row">
+            <div class="row-meta">
+              <span class="row-label" data-i18n="hotkeyForceLabel">Force switch</span>
+              <span class="row-desc" data-i18n="hotkeyForceDesc">Re-type word in the other layout</span>
+            </div>
+            <div class="hk-control">
+              <label class="toggle-sw">
+                <input type="checkbox" id="hotkey-enabled">
+                <span class="tw-track"></span>
+              </label>
+              <kbd class="keycap" id="hotkey-kbd">Win+Shift</kbd>
+            </div>
+          </div>
+          <div class="card-row">
+            <div class="row-meta">
+              <span class="row-label" data-i18n="hotkeyUndoLabel">Undo last switch</span>
+              <span class="row-desc" data-i18n="hotkeyUndoDesc">Restore original word and layout</span>
+            </div>
+            <div class="hk-control">
+              <label class="toggle-sw">
+                <input type="checkbox" id="undo-enabled">
+                <span class="tw-track"></span>
+              </label>
+              <kbd class="keycap" id="undo-kbd">Win+Backspace</kbd>
+            </div>
+          </div>
+        </div>
+        <p class="panel-hint" data-i18n="hotkeysHint">Click a key combination to change it. Only the Win modifier is supported.</p>
+      </div>
+
+      <!-- Ignored words -->
+      <div class="tab-panel" id="panel-words">
+        <p class="panel-title" data-i18n="wordsTitle">Ignored words</p>
+        <div class="card">
+          <div class="chips-area" id="ignored-chips"></div>
+          <div class="card-add-row">
+            <input type="text" id="word-input" data-i18n-placeholder="wordsPlaceholder" placeholder="type a word..." autocomplete="off">
+            <button class="btn-primary" id="word-add-btn" data-i18n="addButton">Add</button>
+            <button class="btn-ghost" id="word-clear-btn" data-i18n="clearAllButton">Clear all</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- App exclusions -->
+      <div class="tab-panel" id="panel-apps">
+        <p class="panel-title" data-i18n="appsTitle">App exclusions</p>
+        <div class="card">
+          <div class="apps-list" id="apps-list"></div>
+          <div class="card-add-row">
+            <input type="text" id="app-input" data-i18n-placeholder="appsPlaceholder" placeholder="app.exe" autocomplete="off">
+            <button class="btn-primary" id="app-add-btn" data-i18n="addButton">Add</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-row">
+            <span class="row-label" data-i18n="runningLabel">Add from running apps</span>
+            <div class="sel-wrap running-wrap">
+              <select id="running-apps-select">
+                <option value="" disabled selected data-i18n="runningPlaceholder">Select running app...</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- System -->
+      <div class="tab-panel" id="panel-system">
+        <p class="panel-title" data-i18n="systemTitle">System</p>
+        <div class="card">
+          <div class="card-row">
+            <span class="row-label" data-i18n="autostartLabel">Start with Windows</span>
+            <label class="toggle-sw">
               <input type="checkbox" id="autostart-toggle">
-              <span class="checkbox-box"></span>
-              <span class="checkbox-text" data-i18n="autostartLabel">Start on Windows startup</span>
+              <span class="tw-track"></span>
             </label>
-            <label class="checkbox-row">
-              <input type="checkbox" id="selection-replace-toggle">
-              <span class="checkbox-box"></span>
-              <span class="checkbox-text" data-i18n="selectionReplaceLabel">Use Ctrl+Shift+Left for word deletion</span>
-            </label>
-            <div class="lang-row">
-              <span class="row-label" data-i18n="langLabel">Language:</span>
-              <div class="select-container lang-select-container">
-                <select id="lang-select">
-                  <option value="en">English</option>
-                  <option value="ru">Русский</option>
-                  <option value="uk">Українська</option>
-                </select>
-              </div>
-            </div>
-            <div class="lang-row">
-              <span class="row-label" data-i18n="sensitivityLabel">Sensitivity:</span>
-              <div class="select-container sensitivity-select-container">
-                <select id="sensitivity-select">
-                  <option value="0.6" data-i18n="sensitivityLow">Low</option>
-                  <option value="1.0" data-i18n="sensitivityMedium">Medium</option>
-                  <option value="1.4" data-i18n="sensitivityHigh">High</option>
-                </select>
-              </div>
-            </div>
-            <div class="lang-row">
-              <span class="row-label" data-i18n="preferredCyrillicLabel">Cyrillic:</span>
-              <div class="select-container">
-                <select id="preferred-cyrillic-select">
-                  <option value="auto" data-i18n="preferredCyrillicAuto">Auto</option>
-                  <option value="ru" data-i18n="preferredCyrillicRu">Russian</option>
-                  <option value="ua" data-i18n="preferredCyrillicUa">Ukrainian</option>
-                </select>
-              </div>
+          </div>
+          <div class="card-row">
+            <span class="row-label" data-i18n="langLabel">Interface language</span>
+            <div class="sel-wrap">
+              <select id="lang-select">
+                <option value="en">English</option>
+                <option value="ru">Русский</option>
+                <option value="uk">Українська</option>
+              </select>
             </div>
           </div>
-        </section>
+          <div class="card-row">
+            <div class="row-meta">
+              <span class="row-label" data-i18n="configLabel">Config file</span>
+              <span class="row-desc" data-i18n="configPath">%APPDATA%\rswitcher\config.json</span>
+            </div>
+            <button class="btn-ghost" id="open-config-btn" data-i18n="openConfigBtn">Open</button>
+          </div>
+        </div>
       </div>
 
-      <!-- Hotkeys Tab -->
-      <div class="tab-content" id="tab-hotkeys">
-        <!-- Hotkeys Group -->
-        <section class="card">
-          <div class="card-header">
-            <h2 data-i18n="hotkeysTitle">Hotkeys</h2>
-          </div>
-          
-          <div class="hotkeys-grid">
-            <label class="checkbox-row">
-              <input type="checkbox" id="hotkey-toggle">
-              <span class="checkbox-box"></span>
-              <span class="checkbox-text" data-i18n="hotkeyForceLabel">Force switch</span>
-            </label>
-            <div class="keycap-container">
-              <kbd id="hotkey-display" class="keycap">Win+Shift</kbd>
-            </div>
+    </div>
+  </div>
 
-            <label class="checkbox-row">
-              <input type="checkbox" id="undo-hotkey-toggle">
-              <span class="checkbox-box"></span>
-              <span class="checkbox-text" data-i18n="hotkeyUndoLabel">Undo last switch</span>
-            </label>
-            <div class="keycap-container">
-              <kbd id="undo-hotkey-display" class="keycap">Win+Backspace</kbd>
-            </div>
-          </div>
-          <div class="card-footer-info" id="hotkeys-footer" data-i18n="hotkeysFooter">
-            Click the key combination to change it.
-          </div>
-        </section>
+  <!-- ── Status bar ──────────────────────────────────────────── -->
+  <div class="statusbar">
+    <div class="status-left">
+      <div class="status-warn" id="admin-status" style="display:none">
+        <i class="ti ti-shield-off"></i>
+        <span data-i18n="adminWarningText">Standard user — won't work in admin windows</span>
+        <button class="btn-warn-sm" id="restart-admin-btn" data-i18n="restartAdminBtn">Restart as admin</button>
       </div>
-
-      <!-- Exceptions Tab -->
-      <div class="tab-content" id="tab-exclusions">
-        <!-- Exclusions Group -->
-        <section class="card card-exclusions">
-          <div class="card-header">
-            <h2 data-i18n="exclusionsTitle">Exclusions (processes)</h2>
-            <span class="subtitle" data-i18n="exclusionsSubtitle">do not switch layout in these windows</span>
-          </div>
-          
-          <div class="exclusions-list-container">
-            <ul id="exclusions-list" class="exclusions-list">
-              <!-- List elements injected dynamically via JavaScript -->
-            </ul>
-          </div>
-
-          <div class="grid-form">
-            <div class="form-row">
-              <span class="row-label" data-i18n="manualLabel">Manual:</span>
-              <div class="input-group">
-                <input type="text" id="manual-input" placeholder="app.exe" data-i18n-placeholder="manualPlaceholder" autocomplete="off">
-                <button id="add-btn" class="btn" data-i18n="addButton">Add</button>
-              </div>
-            </div>
-            <div class="form-row">
-              <span class="row-label" data-i18n="runningLabel">Running:</span>
-              <div class="select-container">
-                <select id="running-apps-select">
-                  <option value="" disabled selected data-i18n="runningSelectPlaceholder">Select running...</option>
-                  <!-- Options injected dynamically via JavaScript -->
-                </select>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- Ignored Words Group -->
-        <section class="card">
-          <div class="card-header">
-            <h2 data-i18n="ignoredWordsTitle">Ignored Words</h2>
-            <span class="subtitle" data-i18n="ignoredWordsSubtitle">words whitelisted by the Undo hotkey</span>
-          </div>
-          <div class="ignored-words-container" style="margin-bottom: 12px;">
-            <div id="ignored-words-list" class="ignored-tags">
-              <!-- Ignored word tags injected dynamically -->
-            </div>
-          </div>
-          <div class="grid-form">
-            <div class="form-row">
-              <span class="row-label" data-i18n="manualLabel">Manual:</span>
-              <div class="input-group">
-                <input type="text" id="ignored-manual-input" placeholder="word" data-i18n-placeholder="ignoredManualPlaceholder" autocomplete="off">
-                <button id="ignored-add-btn" class="btn" data-i18n="addButton">Add</button>
-              </div>
-            </div>
-            <div class="form-row">
-              <span class="row-label">&nbsp;</span>
-              <button id="clear-ignored-btn" class="btn btn-secondary" data-i18n="clearIgnoredBtn">Clear Whitelist</button>
-            </div>
-          </div>
-        </section>
+      <div class="status-ok" id="admin-ok" style="display:none">
+        <i class="ti ti-shield-check"></i>
+        <span data-i18n="adminOkText">Running as administrator</span>
       </div>
-    </main>
-
-    <div class="divider"></div>
-
-    <!-- Footer -->
-    <footer class="app-footer">
-      <span class="footer-note" data-i18n="footerNote">Settings are saved automatically.</span>
-      <button id="open-config-btn" class="btn btn-secondary" data-i18n="openConfigBtn">Open Config</button>
-    </footer>
+    </div>
+    <span class="status-note" data-i18n="savedNote">Saved automatically</span>
   </div>
 
   <script src="main.js"></script>

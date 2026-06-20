@@ -1,810 +1,546 @@
-// ── Tauri IPC invocation helper ───────────────────────────────────────────
+'use strict';
 const { invoke } = window.__TAURI__.core;
 
-// ── DOM Elements ───────────────────────────────────────────────────────────
-const masterSwitch = document.getElementById('master-switch');
-const exclusionsList = document.getElementById('exclusions-list');
-const manualInput = document.getElementById('manual-input');
-const addBtn = document.getElementById('add-btn');
-const runningAppsSelect = document.getElementById('running-apps-select');
-const hotkeyToggle = document.getElementById('hotkey-toggle');
-const hotkeyDisplay = document.getElementById('hotkey-display');
-const undoHotkeyToggle = document.getElementById('undo-hotkey-toggle');
-const undoHotkeyDisplay = document.getElementById('undo-hotkey-display');
-const autostartToggle = document.getElementById('autostart-toggle');
-const langSelect = document.getElementById('lang-select');
-const sensitivitySelect = document.getElementById('sensitivity-select');
-const preferredCyrillicSelect = document.getElementById('preferred-cyrillic-select');
-const openConfigBtn = document.getElementById('open-config-btn');
-
-// New settings elements
-const selectionReplaceToggle = document.getElementById('selection-replace-toggle');
-const ignoredWordsList = document.getElementById('ignored-words-list');
-const clearIgnoredBtn = document.getElementById('clear-ignored-btn');
-const ignoredManualInput = document.getElementById('ignored-manual-input');
-const ignoredAddBtn = document.getElementById('ignored-add-btn');
-const adminWarningBanner = document.getElementById('admin-warning-banner');
-const restartAdminBtn = document.getElementById('restart-admin-btn');
-
-// Local cached state
+// ── State ─────────────────────────────────────────────────────────────────────
 let settings = null;
 let runningApps = [];
 let currentLang = 'en';
-let recordingHotkey = null; // null or { target, displayEl, originalText, originalVk, originalWin }
+let recordingTarget = null; // null | 'hotkey' | 'undo_hotkey'
 let winActive = false;
+let recOrigText = '';
+let pollId = null;
 
-// ── Translations ───────────────────────────────────────────────────────────
-const translations = {
+// ── DOM ───────────────────────────────────────────────────────────────────────
+const masterSwitch    = document.getElementById('master-switch');
+const autostartToggle = document.getElementById('autostart-toggle');
+const langSelect      = document.getElementById('lang-select');
+const openConfigBtn   = document.getElementById('open-config-btn');
+const hotkeyEnabled   = document.getElementById('hotkey-enabled');
+const hotkeyKbd       = document.getElementById('hotkey-kbd');
+const undoEnabled     = document.getElementById('undo-enabled');
+const undoKbd         = document.getElementById('undo-kbd');
+const wordInput       = document.getElementById('word-input');
+const wordAddBtn      = document.getElementById('word-add-btn');
+const wordClearBtn    = document.getElementById('word-clear-btn');
+const ignoredChips    = document.getElementById('ignored-chips');
+const appInput        = document.getElementById('app-input');
+const appAddBtn       = document.getElementById('app-add-btn');
+const appsList        = document.getElementById('apps-list');
+const runningSelect   = document.getElementById('running-apps-select');
+const wordsBadge      = document.getElementById('words-badge');
+const appsBadge       = document.getElementById('apps-badge');
+const adminStatus     = document.getElementById('admin-status');
+const adminOk         = document.getElementById('admin-ok');
+const restartAdminBtn = document.getElementById('restart-admin-btn');
+const themeBtn        = document.getElementById('theme-btn');
+const themeIcon       = document.getElementById('theme-icon');
+const themeLabel      = document.getElementById('theme-label');
+
+// ── Translations ──────────────────────────────────────────────────────────────
+const T = {
   en: {
-    title: "RSwitcher — Settings",
-    masterLabel: "Auto-switching",
-    exclusionsTitle: "Exclusions (processes)",
-    exclusionsSubtitle: "do not switch layout in these windows",
-    exclusionsEmpty: "exclusions list is empty",
-    manualLabel: "Manual:",
-    manualPlaceholder: "app.exe",
-    addButton: "Add",
-    runningLabel: "Running:",
-    runningSelectPlaceholder: "Select running...",
-    hotkeysTitle: "Hotkeys",
-    hotkeyForceLabel: "Force switch",
-    hotkeyUndoLabel: "Undo last switch",
-    hotkeysFooter: "Click the key combination to change it.",
-    pressKeys: "Press keys...",
-    systemTitle: "System",
-    autostartLabel: "Start on Windows startup",
-    langLabel: "Language:",
-    footerNote: "Settings are saved automatically.",
-    openConfigBtn: "Open Config",
-    noRunningApps: "No running windows",
-    alreadyAddedSuffix: " (added)",
-    sensitivityLabel: "Sensitivity:",
-    sensitivityLow: "Low",
-    sensitivityMedium: "Medium",
-    sensitivityHigh: "High",
-    selectionReplaceLabel: "Use Ctrl+Shift+Left for word deletion",
-    preferredCyrillicLabel: "Cyrillic:",
-    preferredCyrillicAuto: "Auto",
-    preferredCyrillicRu: "Russian",
-    preferredCyrillicUa: "Ukrainian",
-    ignoredWordsTitle: "Ignored Words",
-    ignoredWordsSubtitle: "words whitelisted by the Undo hotkey",
-    clearIgnoredBtn: "Clear Whitelist",
-    ignoredEmpty: "whitelist is empty",
-    ignoredManualPlaceholder: "word",
-    adminWarningText: "Running as standard user. RSwitcher won't work in Administrator windows.",
-    restartAdminBtn: "Restart as Admin",
-    tabGeneral: "General",
-    tabHotkeys: "Hotkeys",
-    tabExclusions: "Exceptions"
+    title: 'RSwitcher — Settings',
+    tabDetection: 'Detection', tabHotkeys: 'Hotkeys',
+    tabWords: 'Ignored words', tabApps: 'App exclusions', tabSystem: 'System',
+    detectionTitle: 'Language detection',
+    sensitivityLabel: 'Sensitivity', sensitivityDesc: 'How aggressively words are detected',
+    sensitivityLow: 'Low', sensitivityMedium: 'Medium', sensitivityHigh: 'High',
+    cyrillicLabel: 'Cyrillic preference', cyrillicDesc: 'How RU vs UA ambiguity is resolved',
+    cyrillicAuto: 'Auto', cyrillicRu: 'Russian', cyrillicUa: 'Ukrainian',
+    deletionLabel: 'Word deletion', deletionDesc: 'How the mistyped word is erased',
+    deletionBackspace: 'Backspace', deletionSelect: 'Ctrl+Shift+←',
+    hotkeysTitle: 'Hotkeys',
+    hotkeyForceLabel: 'Force switch', hotkeyForceDesc: 'Re-type word in the other layout',
+    hotkeyUndoLabel: 'Undo last switch', hotkeyUndoDesc: 'Restore original word and layout',
+    hotkeysHint: 'Click a key combination to change it. Only the Win modifier is supported.',
+    wordsTitle: 'Ignored words', wordsPlaceholder: 'type a word…', wordsEmpty: 'whitelist is empty',
+    addButton: 'Add', clearAllButton: 'Clear all',
+    appsTitle: 'App exclusions', appsPlaceholder: 'app.exe', appsEmpty: 'no exclusions',
+    runningLabel: 'Add from running apps', runningPlaceholder: 'Select running app…',
+    alreadyAddedSuffix: ' (added)', noRunningApps: 'No running windows',
+    systemTitle: 'System', autostartLabel: 'Start with Windows', langLabel: 'Interface language',
+    configLabel: 'Config file', configPath: '%APPDATA%\\rswitcher\\config.json', openConfigBtn: 'Open',
+    adminWarningText: "Standard user — won't work in admin windows",
+    adminOkText: 'Running as administrator', restartAdminBtn: 'Restart as admin',
+    savedNote: 'Saved automatically', themeLight: 'Light', themeDark: 'Dark',
+    pressKeys: 'Press keys…',
   },
   ru: {
-    title: "RSwitcher — Настройки",
-    masterLabel: "Автопереключение",
-    exclusionsTitle: "Исключения (процессы)",
-    exclusionsSubtitle: "не переключать раскладку в этих окнах",
-    exclusionsEmpty: "список исключений пуст",
-    manualLabel: "Вручную:",
-    manualPlaceholder: "app.exe",
-    addButton: "Добавить",
-    runningLabel: "Запущенные:",
-    runningSelectPlaceholder: "Выбрать запущенное...",
-    hotkeysTitle: "Горячие клавиши",
-    hotkeyForceLabel: "Принудительное переключение",
-    hotkeyUndoLabel: "Отменить последнее переключение",
-    hotkeysFooter: "Нажмите на комбинацию клавиш, чтобы изменить её.",
-    pressKeys: "Нажмите клавиши...",
-    systemTitle: "Система",
-    autostartLabel: "Запускать при старте Windows",
-    langLabel: "Язык:",
-    footerNote: "Настройки сохраняются автоматически.",
-    openConfigBtn: "Открыть конфиг",
-    noRunningApps: "Нет запущенных окон",
-    alreadyAddedSuffix: " (добавлено)",
-    sensitivityLabel: "Чувствительность:",
-    sensitivityLow: "Низкая",
-    sensitivityMedium: "Средняя",
-    sensitivityHigh: "Высокая",
-    selectionReplaceLabel: "Выделять слово через Ctrl+Shift+Left при замене",
-    preferredCyrillicLabel: "Кириллица:",
-    preferredCyrillicAuto: "Авто",
-    preferredCyrillicRu: "Русский",
-    preferredCyrillicUa: "Украинский",
-    ignoredWordsTitle: "Исключенные слова",
-    ignoredWordsSubtitle: "слова, добавленные в белый список через Отмену",
-    clearIgnoredBtn: "Очистить список",
-    ignoredEmpty: "список пуст",
-    ignoredManualPlaceholder: "слово",
-    adminWarningText: "Запущено с обычными правами. Переключение не работает в окнах Администратора.",
-    restartAdminBtn: "Запуск от имени Админа",
-    tabGeneral: "Основные",
-    tabHotkeys: "Горячие клавиши",
-    tabExclusions: "Исключения"
+    title: 'RSwitcher — Настройки',
+    tabDetection: 'Детекция', tabHotkeys: 'Хоткеи',
+    tabWords: 'Игнор. слова', tabApps: 'Исключения', tabSystem: 'Система',
+    detectionTitle: 'Определение языка',
+    sensitivityLabel: 'Чувствительность', sensitivityDesc: 'Агрессивность автопереключения',
+    sensitivityLow: 'Низкая', sensitivityMedium: 'Средняя', sensitivityHigh: 'Высокая',
+    cyrillicLabel: 'Кириллица', cyrillicDesc: 'Предпочтение при неоднозначности RU/UA',
+    cyrillicAuto: 'Авто', cyrillicRu: 'Русский', cyrillicUa: 'Украинский',
+    deletionLabel: 'Удаление слова', deletionDesc: 'Как стирается ошибочное слово',
+    deletionBackspace: 'Backspace', deletionSelect: 'Ctrl+Shift+←',
+    hotkeysTitle: 'Горячие клавиши',
+    hotkeyForceLabel: 'Принудительное переключение', hotkeyForceDesc: 'Перепечатать слово в другой раскладке',
+    hotkeyUndoLabel: 'Отменить переключение', hotkeyUndoDesc: 'Восстановить слово и раскладку',
+    hotkeysHint: 'Нажмите на комбинацию клавиш, чтобы изменить её. Поддерживается только модификатор Win.',
+    wordsTitle: 'Исключённые слова', wordsPlaceholder: 'введите слово…', wordsEmpty: 'список пуст',
+    addButton: 'Добавить', clearAllButton: 'Очистить',
+    appsTitle: 'Исключения приложений', appsPlaceholder: 'app.exe', appsEmpty: 'нет исключений',
+    runningLabel: 'Добавить из запущенных', runningPlaceholder: 'Выбрать запущенное…',
+    alreadyAddedSuffix: ' (добавлено)', noRunningApps: 'Нет запущенных окон',
+    systemTitle: 'Система', autostartLabel: 'Запускать вместе с Windows', langLabel: 'Язык интерфейса',
+    configLabel: 'Файл конфигурации', configPath: '%APPDATA%\\rswitcher\\config.json', openConfigBtn: 'Открыть',
+    adminWarningText: 'Обычный пользователь — не работает в окнах администратора',
+    adminOkText: 'Запущено как администратор', restartAdminBtn: 'Запуск от имени Админа',
+    savedNote: 'Настройки сохраняются автоматически',
+    themeLight: 'Светлая', themeDark: 'Тёмная', pressKeys: 'Нажмите клавиши…',
   },
   uk: {
-    title: "RSwitcher — Налаштування",
-    masterLabel: "Автоперемикання",
-    exclusionsTitle: "Винятки (процеси)",
-    exclusionsSubtitle: "не перемикати розкладку в цих вікнах",
-    exclusionsEmpty: "список винятків порожній",
-    manualLabel: "Вручну:",
-    manualPlaceholder: "app.exe",
-    addButton: "Додати",
-    runningLabel: "Запущені:",
-    runningSelectPlaceholder: "Обрати запущену...",
-    hotkeysTitle: "Гарячі клавіші",
-    hotkeyForceLabel: "Примусове перемикання",
-    hotkeyUndoLabel: "Скасувати останнє перемикання",
-    hotkeysFooter: "Натисніть на комбінацію клавіш, щоб змінити її.",
-    pressKeys: "Натисніть клавіші...",
-    systemTitle: "Система",
-    autostartLabel: "Запускать разом з Windows",
-    langLabel: "Мова:",
-    footerNote: "Налаштування зберігаються автоматично.",
-    openConfigBtn: "Відкрити конфіг",
-    noRunningApps: "Немає запущених вікон",
-    alreadyAddedSuffix: " (додано)",
-    sensitivityLabel: "Чутливість:",
-    sensitivityLow: "Низька",
-    sensitivityMedium: "Середня",
-    sensitivityHigh: "Висока",
-    selectionReplaceLabel: "Виділяти слово через Ctrl+Shift+Left при заміні",
-    preferredCyrillicLabel: "Кирилиця:",
-    preferredCyrillicAuto: "Авто",
-    preferredCyrillicRu: "Російська",
-    preferredCyrillicUa: "Українська",
-    ignoredWordsTitle: "Виключені слова",
-    ignoredWordsSubtitle: "слова, додані до білого списку через Скасування",
-    clearIgnoredBtn: "Очистити список",
-    ignoredEmpty: "список порожній",
-    ignoredManualPlaceholder: "слово",
-    adminWarningText: "Запущено з обмеженими правами. Перемикач не працює у вікнах Адміністратора.",
-    restartAdminBtn: "Запустити як Адмін",
-    tabGeneral: "Основні",
-    tabHotkeys: "Гарячі клавіші",
-    tabExclusions: "Винятки"
-  }
+    title: 'RSwitcher — Налаштування',
+    tabDetection: 'Детекція', tabHotkeys: 'Гарячі клав.',
+    tabWords: 'Ігнор. слова', tabApps: 'Винятки', tabSystem: 'Система',
+    detectionTitle: 'Визначення мови',
+    sensitivityLabel: 'Чутливість', sensitivityDesc: 'Агресивність автоперемикання',
+    sensitivityLow: 'Низька', sensitivityMedium: 'Середня', sensitivityHigh: 'Висока',
+    cyrillicLabel: 'Кирилиця', cyrillicDesc: 'Перевага при неоднозначності RU/UA',
+    cyrillicAuto: 'Авто', cyrillicRu: 'Російська', cyrillicUa: 'Українська',
+    deletionLabel: 'Видалення слова', deletionDesc: 'Як стирається помилково введене слово',
+    deletionBackspace: 'Backspace', deletionSelect: 'Ctrl+Shift+←',
+    hotkeysTitle: 'Гарячі клавіші',
+    hotkeyForceLabel: 'Примусове перемикання', hotkeyForceDesc: 'Передрукувати слово в іншій розкладці',
+    hotkeyUndoLabel: 'Скасувати перемикання', hotkeyUndoDesc: 'Відновити слово і розкладку',
+    hotkeysHint: 'Натисніть комбінацію клавіш, щоб змінити її. Підтримується лише модифікатор Win.',
+    wordsTitle: 'Виключені слова', wordsPlaceholder: 'введіть слово…', wordsEmpty: 'список порожній',
+    addButton: 'Додати', clearAllButton: 'Очистити',
+    appsTitle: 'Винятки додатків', appsPlaceholder: 'app.exe', appsEmpty: 'немає винятків',
+    runningLabel: 'Додати з запущених', runningPlaceholder: 'Обрати запущений…',
+    alreadyAddedSuffix: ' (додано)', noRunningApps: 'Немає запущених вікон',
+    systemTitle: 'Система', autostartLabel: 'Запускати разом з Windows', langLabel: 'Мова інтерфейсу',
+    configLabel: 'Файл конфігурації', configPath: '%APPDATA%\\rswitcher\\config.json', openConfigBtn: 'Відкрити',
+    adminWarningText: 'Звичайний користувач — не працює у вікнах адміністратора',
+    adminOkText: 'Запущено з правами адміністратора', restartAdminBtn: 'Запустити як Адмін',
+    savedNote: 'Налаштування зберігаються автоматично',
+    themeLight: 'Світла', themeDark: 'Темна', pressKeys: 'Натисніть клавіші…',
+  },
 };
 
-// ── Virtual Key mapping to display name ────────────────────────────────────
+// ── VK display name ───────────────────────────────────────────────────────────
 function vkDisplayName(vk, win) {
-  let base = "";
-  if (vk >= 65 && vk <= 90) {
-    base = String.fromCharCode(vk);
-  } else if (vk >= 48 && vk <= 57) {
-    base = String.fromCharCode(vk);
-  } else if (vk >= 96 && vk <= 105) {
-    base = `Num ` + (vk - 96);
-  } else if (vk >= 112 && vk <= 135) {
-    base = `F` + (vk - 111);
-  } else {
-    switch (vk) {
-      case 0x10: case 0xA0: case 0xA1: base = "Shift"; break;
-      case 0x11: case 0xA2: case 0xA3: base = "Ctrl"; break;
-      case 0x12: case 0xA4: case 0xA5: base = "Alt"; break;
-      case 0x08: base = "Backspace"; break;
-      case 0x09: base = "Tab"; break;
-      case 0x0D: base = "Enter"; break;
-      case 0x13: base = "Pause"; break;
-      case 0x14: base = "Caps Lock"; break;
-      case 0x1B: base = "Esc"; break;
-      case 0x20: base = "Space"; break;
-      case 0x21: base = "Page Up"; break;
-      case 0x22: base = "Page Down"; break;
-      case 0x23: base = "End"; break;
-      case 0x24: base = "Home"; break;
-      case 0x25: base = "Left"; break;
-      case 0x26: base = "Up"; break;
-      case 0x27: base = "Right"; break;
-      case 0x28: base = "Down"; break;
-      case 0x2C: base = "Print Screen"; break;
-      case 0x2D: base = "Insert"; break;
-      case 0x2E: base = "Delete"; break;
-      case 0x5D: base = "Context Menu"; break;
-      case 0x90: base = "Num Lock"; break;
-      case 0x91: base = "Scroll Lock"; break;
-      case 186: base = ";"; break;
-      case 187: base = "="; break;
-      case 188: base = ","; break;
-      case 189: base = "-"; break;
-      case 190: base = "."; break;
-      case 191: base = "/"; break;
-      case 192: base = "`"; break;
-      case 219: base = "["; break;
-      case 220: base = "\\"; break;
-      case 221: base = "]"; break;
-      case 222: base = "'"; break;
-      default:
-        base = `0x${vk.toString(16).toUpperCase()}`;
-    }
+  let base = '';
+  if (vk >= 65 && vk <= 90) base = String.fromCharCode(vk);
+  else if (vk >= 48 && vk <= 57) base = String.fromCharCode(vk);
+  else if (vk >= 96 && vk <= 105) base = 'Num ' + (vk - 96);
+  else if (vk >= 112 && vk <= 135) base = 'F' + (vk - 111);
+  else switch (vk) {
+    case 0x10: case 0xA0: case 0xA1: base = 'Shift'; break;
+    case 0x11: case 0xA2: case 0xA3: base = 'Ctrl'; break;
+    case 0x12: case 0xA4: case 0xA5: base = 'Alt'; break;
+    case 0x08: base = 'Backspace'; break;
+    case 0x09: base = 'Tab'; break;
+    case 0x0D: base = 'Enter'; break;
+    case 0x13: base = 'Pause'; break;
+    case 0x14: base = 'Caps Lock'; break;
+    case 0x1B: base = 'Esc'; break;
+    case 0x20: base = 'Space'; break;
+    case 0x21: base = 'Page Up'; break;
+    case 0x22: base = 'Page Down'; break;
+    case 0x23: base = 'End'; break;
+    case 0x24: base = 'Home'; break;
+    case 0x25: base = '←'; break;
+    case 0x26: base = '↑'; break;
+    case 0x27: base = '→'; break;
+    case 0x28: base = '↓'; break;
+    case 0x2C: base = 'Print Screen'; break;
+    case 0x2D: base = 'Insert'; break;
+    case 0x2E: base = 'Delete'; break;
+    case 0x5D: base = 'Menu'; break;
+    case 0x90: base = 'Num Lock'; break;
+    case 0x91: base = 'Scroll Lock'; break;
+    case 186: base = ';'; break;
+    case 187: base = '='; break;
+    case 188: base = ','; break;
+    case 189: base = '-'; break;
+    case 190: base = '.'; break;
+    case 191: base = '/'; break;
+    case 192: base = '`'; break;
+    case 219: base = '['; break;
+    case 220: base = '\\'; break;
+    case 221: base = ']'; break;
+    case 222: base = "'"; break;
+    default: base = '0x' + vk.toString(16).toUpperCase();
   }
-  return win ? `Win+${base}` : base;
+  return win ? 'Win+' + base : base;
 }
 
-// ── Apply translations to the UI ───────────────────────────────────────────
+// ── Theme ─────────────────────────────────────────────────────────────────────
+function initTheme() {
+  const stored = localStorage.getItem('rsw-theme');
+  const dark = stored ? stored === 'dark' : !window.matchMedia('(prefers-color-scheme: light)').matches;
+  applyTheme(dark);
+}
+
+function applyTheme(dark) {
+  document.documentElement.classList.toggle('light', !dark);
+  themeIcon.className = dark ? 'ti ti-moon' : 'ti ti-sun';
+  const d = T[currentLang] || T.en;
+  themeLabel.textContent = dark ? d.themeLight : d.themeDark;
+  localStorage.setItem('rsw-theme', dark ? 'dark' : 'light');
+}
+
+themeBtn.addEventListener('click', () => {
+  applyTheme(document.documentElement.classList.contains('light'));
+});
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function showTab(id) {
+  document.querySelectorAll('.nav-item').forEach(el =>
+    el.classList.toggle('active', el.dataset.tab === id));
+  document.querySelectorAll('.tab-panel').forEach(el =>
+    el.classList.toggle('active', el.id === 'panel-' + id));
+}
+
+document.querySelectorAll('.nav-item').forEach(el =>
+  el.addEventListener('click', () => showTab(el.dataset.tab)));
+
+// ── Segmented controls ────────────────────────────────────────────────────────
+function syncSeg(group, value) {
+  document.querySelectorAll(`[data-group="${group}"] .seg-btn`).forEach(btn =>
+    btn.classList.toggle('active', btn.dataset.value === String(value)));
+}
+
+document.querySelectorAll('.seg-control').forEach(ctrl => {
+  ctrl.querySelectorAll('.seg-btn').forEach(btn =>
+    btn.addEventListener('click', () => onSegClick(ctrl.dataset.group, btn.dataset.value)));
+});
+
+async function onSegClick(group, value) {
+  if (!settings) return;
+  syncSeg(group, value);
+  if (group === 'sensitivity')  settings.sensitivity = parseFloat(value);
+  if (group === 'cyrillic')     settings.preferred_cyrillic = value;
+  if (group === 'deletion')     settings.use_selection_replace = (value === 'sel');
+  try {
+    const s = await invoke('save_settings', { settings });
+    if (s) settings = s;
+  } catch (e) { console.error(e); }
+}
+
+// ── Translations ──────────────────────────────────────────────────────────────
 function applyTranslations() {
-  const dict = translations[currentLang] || translations['en'];
-
-  // Update document title
-  document.title = dict.title;
-
-  // Translate all elements with data-i18n attribute
+  const d = T[currentLang] || T.en;
+  document.title = d.title;
   document.querySelectorAll('[data-i18n]').forEach(el => {
-    const key = el.getAttribute('data-i18n');
-    if (dict[key]) {
-      el.textContent = dict[key];
-    }
+    const v = d[el.dataset.i18n];
+    if (v !== undefined) el.textContent = v;
   });
-
-  // Translate elements with data-i18n-placeholder
   document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
-    const key = el.getAttribute('data-i18n-placeholder');
-    if (dict[key]) {
-      el.setAttribute('placeholder', dict[key]);
-    }
+    const v = d[el.dataset.i18nPlaceholder];
+    if (v !== undefined) el.placeholder = v;
   });
-
-  // Re-render lists and dropdowns with dynamic translated text
-  renderUI();
-  renderRunningApps();
+  const dark = !document.documentElement.classList.contains('light');
+  themeLabel.textContent = dark ? d.themeLight : d.themeDark;
 }
 
-// ── Render UI based on loaded settings ──────────────────────────────────────
+// ── Render ────────────────────────────────────────────────────────────────────
 function renderUI() {
   if (!settings) return;
+  const d = T[currentLang] || T.en;
 
-  const dict = translations[currentLang] || translations['en'];
-
-  // Master switch
   masterSwitch.checked = settings.enabled;
 
-  // Render exclusions list
-  exclusionsList.innerHTML = '';
-  if (settings.exceptions.length === 0) {
-    const emptyState = document.createElement('div');
-    emptyState.className = 'list-empty-state';
-    emptyState.textContent = dict.exclusionsEmpty;
-    exclusionsList.appendChild(emptyState);
-  } else {
-    settings.exceptions.forEach((exc, index) => {
-      const li = document.createElement('li');
-      
-      const bullet = document.createElement('span');
-      bullet.className = 'bullet';
-      bullet.textContent = '•';
-      
-      const nameSpan = document.createElement('span');
-      nameSpan.className = 'app-name';
-      nameSpan.textContent = exc;
-      
-      const delBtn = document.createElement('button');
-      delBtn.className = 'delete-btn';
-      delBtn.textContent = '✕';
-      delBtn.addEventListener('click', () => deleteException(index));
-      
-      li.appendChild(bullet);
-      li.appendChild(nameSpan);
-      li.appendChild(delBtn);
-      exclusionsList.appendChild(li);
-    });
-  }
+  // Segmented controls
+  syncSeg('sensitivity', settings.sensitivity.toFixed(1));
+  syncSeg('cyrillic', settings.preferred_cyrillic || 'auto');
+  syncSeg('deletion', settings.use_selection_replace ? 'sel' : 'bs');
 
-  // Hotkey controls
-  hotkeyToggle.checked = settings.hotkey_enabled;
-  if (!recordingHotkey || recordingHotkey.target !== 'hotkey') {
-    hotkeyDisplay.textContent = vkDisplayName(settings.hotkey_vk, settings.hotkey_win);
-  }
-  
-  if (settings.hotkey_enabled) {
-    hotkeyToggle.closest('.checkbox-row').classList.remove('disabled');
-  } else {
-    hotkeyToggle.closest('.checkbox-row').classList.add('disabled');
-    if (recordingHotkey && recordingHotkey.target === 'hotkey') {
-      stopRecording(false);
-    }
-  }
+  // Hotkeys
+  hotkeyEnabled.checked = settings.hotkey_enabled;
+  undoEnabled.checked   = settings.undo_hotkey_enabled;
+  if (recordingTarget !== 'hotkey')     hotkeyKbd.textContent = vkDisplayName(settings.hotkey_vk, settings.hotkey_win);
+  if (recordingTarget !== 'undo_hotkey') undoKbd.textContent  = vkDisplayName(settings.undo_hotkey_vk, settings.undo_hotkey_win);
+  hotkeyKbd.classList.toggle('disabled', !settings.hotkey_enabled);
+  undoKbd.classList.toggle('disabled',   !settings.undo_hotkey_enabled);
+  if (!settings.hotkey_enabled     && recordingTarget === 'hotkey')     stopRecording(false);
+  if (!settings.undo_hotkey_enabled && recordingTarget === 'undo_hotkey') stopRecording(false);
 
-  // Undo hotkey controls
-  undoHotkeyToggle.checked = settings.undo_hotkey_enabled;
-  if (!recordingHotkey || recordingHotkey.target !== 'undo_hotkey') {
-    undoHotkeyDisplay.textContent = vkDisplayName(settings.undo_hotkey_vk, settings.undo_hotkey_win);
-  }
-  
-  if (settings.undo_hotkey_enabled) {
-    undoHotkeyToggle.closest('.checkbox-row').classList.remove('disabled');
-  } else {
-    undoHotkeyToggle.closest('.checkbox-row').classList.add('disabled');
-    if (recordingHotkey && recordingHotkey.target === 'undo_hotkey') {
-      stopRecording(false);
-    }
-  }
-
-  // Selection replacement checkbox
-  selectionReplaceToggle.checked = settings.use_selection_replace;
-
-  // Render ignored words whitelist as pill tags
-  ignoredWordsList.innerHTML = '';
+  // Ignored words chips
+  ignoredChips.innerHTML = '';
   if (settings.ignored_words.length === 0) {
-    const emptyState = document.createElement('div');
-    emptyState.className = 'list-empty-state';
-    emptyState.textContent = dict.ignoredEmpty;
-    ignoredWordsList.appendChild(emptyState);
+    const em = document.createElement('span');
+    em.className = 'chips-empty';
+    em.textContent = d.wordsEmpty;
+    ignoredChips.appendChild(em);
   } else {
-    settings.ignored_words.forEach((word, index) => {
-      const tag = document.createElement('span');
-      tag.className = 'ignored-tag';
-      tag.textContent = word + ' ';
-      
-      const removeBtn = document.createElement('button');
-      removeBtn.className = 'remove-tag-btn';
-      removeBtn.textContent = '✕';
-      removeBtn.addEventListener('click', () => removeIgnoredWord(index));
-      
-      tag.appendChild(removeBtn);
-      ignoredWordsList.appendChild(tag);
+    settings.ignored_words.forEach((word, i) => {
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      const rm = document.createElement('button');
+      rm.className = 'chip-rm';
+      rm.innerHTML = '<i class="ti ti-x"></i>';
+      rm.addEventListener('click', () => removeIgnoredWord(i));
+      chip.append(document.createTextNode(word), rm);
+      ignoredChips.appendChild(chip);
     });
   }
+  wordsBadge.textContent = settings.ignored_words.length > 0 ? settings.ignored_words.length : '';
+
+  // App exclusions list
+  appsList.innerHTML = '';
+  if (settings.exceptions.length === 0) {
+    const em = document.createElement('div');
+    em.className = 'apps-empty';
+    em.textContent = d.appsEmpty;
+    appsList.appendChild(em);
+  } else {
+    settings.exceptions.forEach((exc, i) => {
+      const row = document.createElement('div');
+      row.className = 'app-row';
+      const rm = document.createElement('button');
+      rm.className = 'app-rm';
+      rm.innerHTML = '<i class="ti ti-x"></i>';
+      rm.addEventListener('click', () => deleteException(i));
+      row.append(document.createTextNode(exc), rm);
+      appsList.appendChild(row);
+    });
+  }
+  appsBadge.textContent = settings.exceptions.length > 0 ? settings.exceptions.length : '';
 }
 
-// ── Render Running Apps select dropdown ─────────────────────────────────────
 function renderRunningApps() {
-  const dict = translations[currentLang] || translations['en'];
-  
-  // Keep the first option
-  runningAppsSelect.innerHTML = `<option value="" disabled selected>${dict.runningSelectPlaceholder}</option>`;
-
+  const d = T[currentLang] || T.en;
+  runningSelect.innerHTML = `<option value="" disabled selected>${d.runningPlaceholder}</option>`;
   if (runningApps.length === 0) {
     const opt = document.createElement('option');
     opt.disabled = true;
-    opt.textContent = dict.noRunningApps;
-    runningAppsSelect.appendChild(opt);
+    opt.textContent = d.noRunningApps;
+    runningSelect.appendChild(opt);
   } else {
     runningApps.forEach(app => {
-      const alreadyAdded = settings && settings.exceptions.includes(app.exe.toLowerCase());
+      const added = settings && settings.exceptions.includes(app.exe.toLowerCase());
       const opt = document.createElement('option');
       opt.value = app.exe;
-      opt.textContent = alreadyAdded ? `${app.exe}${dict.alreadyAddedSuffix}` : app.exe;
-      opt.disabled = alreadyAdded;
-      runningAppsSelect.appendChild(opt);
+      opt.textContent = added ? app.exe + d.alreadyAddedSuffix : app.exe;
+      opt.disabled = added;
+      runningSelect.appendChild(opt);
     });
   }
 }
 
-// ── Hotkey Recording Logic ──────────────────────────────────────────────────
-function startRecording(target, displayEl) {
-  if (recordingHotkey) {
-    stopRecording(false); // cancel any active recording first
-  }
-  
-  const originalText = displayEl.textContent;
-  let originalVk, originalWin;
-  if (target === 'hotkey') {
-    originalVk = settings.hotkey_vk;
-    originalWin = settings.hotkey_win;
-  } else {
-    originalVk = settings.undo_hotkey_vk;
-    originalWin = settings.undo_hotkey_win;
-  }
-  
-  recordingHotkey = {
-    target,
-    displayEl,
-    originalText,
-    originalVk,
-    originalWin
-  };
-  
+// ── Hotkey recording ──────────────────────────────────────────────────────────
+function startRecording(target, el) {
+  if (recordingTarget) stopRecording(false);
+  if (!settings) return;
+  if (target === 'hotkey'     && !settings.hotkey_enabled)     return;
+  if (target === 'undo_hotkey' && !settings.undo_hotkey_enabled) return;
+  recordingTarget = target;
+  recOrigText = el.textContent;
   winActive = false;
-  displayEl.classList.add('recording');
-  const dict = translations[currentLang] || translations['en'];
-  displayEl.textContent = dict.pressKeys;
-  
-  // Attach capture phase event listeners to override default hotkeys and shortcuts
-  window.addEventListener('keydown', onKeyDownRecording, true);
-  window.addEventListener('keyup', onKeyUpRecording, true);
-  window.addEventListener('blur', onBlurRecording);
-  document.addEventListener('click', onClickOutsideRecording, true);
+  el.classList.add('recording');
+  el.textContent = (T[currentLang] || T.en).pressKeys;
+  window.addEventListener('keydown', onKeyDown, true);
+  window.addEventListener('keyup',   onKeyUp,   true);
+  window.addEventListener('blur',    onBlur);
+  document.addEventListener('click', onClickOut, true);
 }
 
 function stopRecording(save, vk = 0, win = false) {
-  if (!recordingHotkey) return;
-  
-  const { target, displayEl, originalText } = recordingHotkey;
-  
-  // Remove event listeners
-  window.removeEventListener('keydown', onKeyDownRecording, true);
-  window.removeEventListener('keyup', onKeyUpRecording, true);
-  window.removeEventListener('blur', onBlurRecording);
-  document.removeEventListener('click', onClickOutsideRecording, true);
-  
-  displayEl.classList.remove('recording');
-  recordingHotkey = null;
-  winActive = false;
-  
+  if (!recordingTarget) return;
+  const el = recordingTarget === 'hotkey' ? hotkeyKbd : undoKbd;
+  window.removeEventListener('keydown', onKeyDown, true);
+  window.removeEventListener('keyup',   onKeyUp,   true);
+  window.removeEventListener('blur',    onBlur);
+  document.removeEventListener('click', onClickOut, true);
+  el.classList.remove('recording');
   if (save) {
-    if (target === 'hotkey') {
-      settings.hotkey_vk = vk;
-      settings.hotkey_win = win;
-    } else {
-      settings.undo_hotkey_vk = vk;
-      settings.undo_hotkey_win = win;
-    }
-    
-    // Save settings back to Tauri
+    if (recordingTarget === 'hotkey') { settings.hotkey_vk = vk;     settings.hotkey_win = win; }
+    else                              { settings.undo_hotkey_vk = vk; settings.undo_hotkey_win = win; }
     invoke('save_settings', { settings })
-      .then((saved) => {
-        if (saved) settings = saved;
-        renderUI();
-      })
-      .catch(err => {
-        console.error("Failed to save hotkeys:", err);
-        renderUI();
-      });
+      .then(s => { if (s) settings = s; renderUI(); })
+      .catch(console.error);
   } else {
-    displayEl.textContent = originalText;
+    el.textContent = recOrigText;
   }
+  recordingTarget = null;
+  winActive = false;
 }
 
-function onKeyDownRecording(e) {
-  e.preventDefault();
-  e.stopPropagation();
-  
-  const keyCode = e.keyCode;
-  
-  // Abort recording if Escape (27) is pressed
-  if (keyCode === 27) {
-    stopRecording(false);
-    return;
-  }
-  
-  // If the key is the Meta/Windows key (91 or 92), display "Win + ..." and wait for the rest
-  if (keyCode === 91 || keyCode === 92) {
+function onKeyDown(e) {
+  e.preventDefault(); e.stopPropagation();
+  if (e.keyCode === 27) { stopRecording(false); return; }
+  if (e.keyCode === 91 || e.keyCode === 92) {
     winActive = true;
-    if (recordingHotkey) {
-      recordingHotkey.displayEl.textContent = 'Win + ...';
-    }
+    const el = recordingTarget === 'hotkey' ? hotkeyKbd : undoKbd;
+    el.textContent = 'Win + …';
     return;
   }
-  
-  // Otherwise, finish recording and capture keycode + meta state
-  const win = winActive || e.metaKey;
-  stopRecording(true, keyCode, win);
+  stopRecording(true, e.keyCode, winActive || e.metaKey);
 }
 
-function onKeyUpRecording(e) {
-  const keyCode = e.keyCode;
-  if (keyCode === 91 || keyCode === 92) {
+function onKeyUp(e) {
+  if (e.keyCode === 91 || e.keyCode === 92) {
     winActive = false;
-    if (recordingHotkey) {
-      const dict = translations[currentLang] || translations['en'];
-      recordingHotkey.displayEl.textContent = dict.pressKeys;
-    }
+    const el = recordingTarget === 'hotkey' ? hotkeyKbd : undoKbd;
+    if (el) el.textContent = (T[currentLang] || T.en).pressKeys;
   }
 }
 
-function onBlurRecording() {
-  stopRecording(false);
+function onBlur()       { stopRecording(false); }
+function onClickOut(e)  {
+  const el = recordingTarget === 'hotkey' ? hotkeyKbd : undoKbd;
+  if (el && !el.contains(e.target)) stopRecording(false);
 }
 
-function onClickOutsideRecording(e) {
-  if (recordingHotkey && !recordingHotkey.displayEl.contains(e.target)) {
-    stopRecording(false);
-  }
-}
-
-// ── API Actions ─────────────────────────────────────────────────────────────
+// ── Data loading ──────────────────────────────────────────────────────────────
 async function loadAllData() {
   try {
     settings = await invoke('get_settings');
-    const autostart = await invoke('is_autostart_enabled');
+    const [autostart, elevated, apps] = await Promise.all([
+      invoke('is_autostart_enabled'),
+      invoke('is_elevated'),
+      invoke('get_running_apps'),
+    ]);
     autostartToggle.checked = autostart;
-    
+    runningApps = apps;
+
     if (settings && settings.lang) {
       currentLang = settings.lang;
       langSelect.value = currentLang;
-    } else {
-      currentLang = 'en';
-      langSelect.value = 'en';
-    }
-    
-    if (settings && settings.sensitivity !== undefined) {
-      sensitivitySelect.value = settings.sensitivity.toFixed(1);
-    } else {
-      sensitivitySelect.value = '1.0';
     }
 
-    preferredCyrillicSelect.value = (settings && settings.preferred_cyrillic) || 'auto';
-
-    const elevated = await invoke('is_elevated');
-    if (elevated) {
-      adminWarningBanner.style.display = 'none';
-    } else {
-      adminWarningBanner.style.display = 'flex';
-    }
+    adminStatus.style.display = elevated ? 'none' : 'flex';
+    adminOk.style.display     = elevated ? 'flex' : 'none';
 
     applyTranslations();
-    await refreshRunningApps();
-  } catch (err) {
-    console.error("Failed to load settings:", err);
-  }
+    renderUI();
+    renderRunningApps();
+  } catch (e) { console.error('loadAllData', e); }
 }
 
 async function refreshRunningApps() {
-  try {
-    runningApps = await invoke('get_running_apps');
-    renderRunningApps();
-  } catch (err) {
-    console.error("Failed to fetch running apps:", err);
-  }
+  try { runningApps = await invoke('get_running_apps'); renderRunningApps(); }
+  catch (e) { console.error(e); }
 }
 
-async function addManualException() {
-  const value = manualInput.value.trim().toLowerCase();
-  if (!value) return;
-  
+// ── Exception management ──────────────────────────────────────────────────────
+async function addException() {
+  const val = appInput.value.trim().toLowerCase();
+  if (!val) return;
   try {
-    settings = await invoke('add_exception', { app: value });
-    manualInput.value = '';
-    renderUI();
-    renderRunningApps();
-  } catch (err) {
-    console.error("Failed to add exception:", err);
-  }
+    settings = await invoke('add_exception', { app: val });
+    appInput.value = '';
+    renderUI(); renderRunningApps();
+  } catch (e) { console.error(e); }
 }
 
-async function deleteException(index) {
-  try {
-    settings = await invoke('remove_exception', { index });
-    renderUI();
-    renderRunningApps();
-  } catch (err) {
-    console.error("Failed to delete exception:", err);
-  }
+async function deleteException(i) {
+  try { settings = await invoke('remove_exception', { index: i }); renderUI(); renderRunningApps(); }
+  catch (e) { console.error(e); }
 }
 
-async function removeIgnoredWord(index) {
+// ── Ignored words management ──────────────────────────────────────────────────
+async function addIgnoredWord() {
   if (!settings) return;
-  settings.ignored_words.splice(index, 1);
+  const word = wordInput.value.trim().toLowerCase();
+  if (!word || settings.ignored_words.includes(word)) { wordInput.value = ''; return; }
+  settings.ignored_words.push(word);
   try {
-    const saved = await invoke('save_settings', { settings });
-    if (saved) settings = saved;
+    const s = await invoke('save_settings', { settings });
+    if (s) settings = s;
+    wordInput.value = '';
     renderUI();
-  } catch (err) {
-    console.error("Failed to remove ignored word:", err);
-  }
+  } catch (e) { console.error(e); }
+}
+
+async function removeIgnoredWord(i) {
+  if (!settings) return;
+  settings.ignored_words.splice(i, 1);
+  try { const s = await invoke('save_settings', { settings }); if (s) settings = s; renderUI(); }
+  catch (e) { console.error(e); }
 }
 
 async function clearIgnoredWords() {
   if (!settings) return;
   settings.ignored_words = [];
-  try {
-    const saved = await invoke('save_settings', { settings });
-    if (saved) settings = saved;
-    renderUI();
-  } catch (err) {
-    console.error("Failed to clear ignored words:", err);
-  }
+  try { const s = await invoke('save_settings', { settings }); if (s) settings = s; renderUI(); }
+  catch (e) { console.error(e); }
 }
 
-async function addManualIgnoredWord() {
-  if (!settings) return;
-  const word = ignoredManualInput.value.trim().toLowerCase();
-  if (!word) return;
-  if (!settings.ignored_words.includes(word)) {
-    settings.ignored_words.push(word);
-    try {
-      const saved = await invoke('save_settings', { settings });
-      if (saved) settings = saved;
-      ignoredManualInput.value = '';
-      renderUI();
-    } catch (err) {
-      console.error("Failed to add ignored word:", err);
-    }
-  } else {
-    ignoredManualInput.value = '';
-  }
-}
-
-// ── Event Listeners ─────────────────────────────────────────────────────────
-
-// Master Switch
+// ── Event listeners ───────────────────────────────────────────────────────────
 masterSwitch.addEventListener('change', async () => {
-  try {
-    settings = await invoke('set_enabled', { enabled: masterSwitch.checked });
-    renderUI();
-  } catch (err) {
-    console.error("Failed to toggle master switch:", err);
-  }
+  try { settings = await invoke('set_enabled', { enabled: masterSwitch.checked }); renderUI(); }
+  catch (e) { console.error(e); }
 });
 
-// Manual Input Add
-addBtn.addEventListener('click', addManualException);
-manualInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    addManualException();
-  }
-});
-
-// Running Apps ComboBox
-runningAppsSelect.addEventListener('change', async () => {
-  const selectedApp = runningAppsSelect.value;
-  if (!selectedApp) return;
-  
-  try {
-    settings = await invoke('add_exception', { app: selectedApp });
-    runningAppsSelect.value = ''; // Reset dropdown selection
-    renderUI();
-    renderRunningApps();
-  } catch (err) {
-    console.error("Failed to add selected app exception:", err);
-  }
-});
-
-// Hotkey Toggles
-hotkeyToggle.addEventListener('change', async () => {
-  if (!settings) return;
-  settings.hotkey_enabled = hotkeyToggle.checked;
-  try {
-    const saved = await invoke('save_settings', { settings });
-    if (saved) settings = saved;
-    renderUI();
-  } catch (err) {
-    console.error("Failed to save hotkey settings:", err);
-  }
-});
-
-undoHotkeyToggle.addEventListener('change', async () => {
-  if (!settings) return;
-  settings.undo_hotkey_enabled = undoHotkeyToggle.checked;
-  try {
-    const saved = await invoke('save_settings', { settings });
-    if (saved) settings = saved;
-    renderUI();
-  } catch (err) {
-    console.error("Failed to save undo hotkey settings:", err);
-  }
-});
-
-// Autostart Toggle
 autostartToggle.addEventListener('change', async () => {
-  try {
-    await invoke('set_autostart', { enabled: autostartToggle.checked });
-  } catch (err) {
-    console.error("Failed to save autostart settings:", err);
-  }
+  try { await invoke('set_autostart', { enabled: autostartToggle.checked }); }
+  catch (e) { console.error(e); }
 });
 
-// Language Select Dropdown
 langSelect.addEventListener('change', async () => {
   if (!settings) return;
   settings.lang = langSelect.value;
   currentLang = settings.lang;
   applyTranslations();
-  try {
-    const saved = await invoke('save_settings', { settings });
-    if (saved) settings = saved;
-  } catch (err) {
-    console.error("Failed to save settings with new language:", err);
-  }
+  try { const s = await invoke('save_settings', { settings }); if (s) settings = s; }
+  catch (e) { console.error(e); }
 });
 
-// Sensitivity Select Dropdown
-sensitivitySelect.addEventListener('change', async () => {
+openConfigBtn.addEventListener('click', async () => {
+  try { await invoke('open_config_dir'); } catch (e) { console.error(e); }
+});
+
+hotkeyEnabled.addEventListener('change', async () => {
   if (!settings) return;
-  settings.sensitivity = parseFloat(sensitivitySelect.value);
-  try {
-    const saved = await invoke('save_settings', { settings });
-    if (saved) settings = saved;
-  } catch (err) {
-    console.error("Failed to save sensitivity settings:", err);
-  }
+  settings.hotkey_enabled = hotkeyEnabled.checked;
+  try { const s = await invoke('save_settings', { settings }); if (s) settings = s; renderUI(); }
+  catch (e) { console.error(e); }
 });
 
-// Preferred Cyrillic Select Dropdown
-preferredCyrillicSelect.addEventListener('change', async () => {
+undoEnabled.addEventListener('change', async () => {
   if (!settings) return;
-  settings.preferred_cyrillic = preferredCyrillicSelect.value;
+  settings.undo_hotkey_enabled = undoEnabled.checked;
+  try { const s = await invoke('save_settings', { settings }); if (s) settings = s; renderUI(); }
+  catch (e) { console.error(e); }
+});
+
+hotkeyKbd.addEventListener('click', () => startRecording('hotkey', hotkeyKbd));
+undoKbd.addEventListener('click',   () => startRecording('undo_hotkey', undoKbd));
+
+appAddBtn.addEventListener('click', addException);
+appInput.addEventListener('keydown', e => { if (e.key === 'Enter') addException(); });
+
+runningSelect.addEventListener('change', async () => {
+  const val = runningSelect.value;
+  if (!val) return;
   try {
-    const saved = await invoke('save_settings', { settings });
-    if (saved) settings = saved;
-  } catch (err) {
-    console.error("Failed to save preferred_cyrillic setting:", err);
-  }
+    settings = await invoke('add_exception', { app: val });
+    runningSelect.value = '';
+    renderUI(); renderRunningApps();
+  } catch (e) { console.error(e); }
 });
 
-// Selection replace toggle listener
-selectionReplaceToggle.addEventListener('change', async () => {
-  if (!settings) return;
-  settings.use_selection_replace = selectionReplaceToggle.checked;
-  try {
-    const saved = await invoke('save_settings', { settings });
-    if (saved) settings = saved;
-    renderUI();
-  } catch (err) {
-    console.error("Failed to save selection replace settings:", err);
-  }
+wordAddBtn.addEventListener('click', addIgnoredWord);
+wordInput.addEventListener('keydown', e => { if (e.key === 'Enter') addIgnoredWord(); });
+wordClearBtn.addEventListener('click', clearIgnoredWords);
+
+restartAdminBtn.addEventListener('click', async () => {
+  try { await invoke('restart_as_admin'); } catch (e) { console.error(e); }
 });
 
-// Whitelist clear listener
-clearIgnoredBtn.addEventListener('click', clearIgnoredWords);
-
-// Whitelist manual add listeners
-ignoredAddBtn.addEventListener('click', addManualIgnoredWord);
-ignoredManualInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    addManualIgnoredWord();
-  }
-});
-
-// Keycap Clicks (Interactive Recording)
-hotkeyDisplay.addEventListener('click', () => {
-  if (settings && settings.hotkey_enabled) {
-    startRecording('hotkey', hotkeyDisplay);
-  }
-});
-
-undoHotkeyDisplay.addEventListener('click', () => {
-  if (settings && settings.undo_hotkey_enabled) {
-    startRecording('undo_hotkey', undoHotkeyDisplay);
-  }
-});
-
-let pollIntervalId = null;
-
+// ── Running apps polling ──────────────────────────────────────────────────────
 function startPolling() {
-  if (!pollIntervalId) {
+  if (!pollId) {
     refreshRunningApps();
-    pollIntervalId = setInterval(refreshRunningApps, 3000);
+    pollId = setInterval(refreshRunningApps, 3000);
   }
 }
 
 function stopPolling() {
-  if (pollIntervalId) {
-    clearInterval(pollIntervalId);
-    pollIntervalId = null;
-  }
+  if (pollId) { clearInterval(pollId); pollId = null; }
 }
 
-// Open Config button
-openConfigBtn.addEventListener('click', async () => {
-  try {
-    await invoke('open_config_dir');
-  } catch (err) {
-    console.error("Failed to open config directory:", err);
-  }
-});
+runningSelect.addEventListener('focus', refreshRunningApps);
+window.addEventListener('focus', startPolling);
+window.addEventListener('blur',  stopPolling);
 
-// Restart as Admin button
-restartAdminBtn.addEventListener('click', async () => {
-  try {
-    await invoke('restart_as_admin');
-  } catch (err) {
-    console.error("Failed to restart as administrator:", err);
-  }
-});
-
-// ── Initialization ─────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  loadAllData();
-  
-  // Tabs Navigation switching logic
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tabName = btn.getAttribute('data-tab');
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-      document.getElementById(`tab-${tabName}`).classList.add('active');
-    });
-  });
-
-  // Poll running apps list only when the window has focus to save CPU/battery
-  if (document.hasFocus()) {
-    startPolling();
-  }
-  window.addEventListener('focus', startPolling);
-  window.addEventListener('blur', stopPolling);
-  
-  // Refresh immediately when the dropdown gains focus
-  runningAppsSelect.addEventListener('focus', refreshRunningApps);
-});
+// ── Boot ──────────────────────────────────────────────────────────────────────
+initTheme();
+loadAllData();
+if (document.hasFocus()) startPolling();

@@ -343,8 +343,12 @@ impl WordBuffer {
 
         // ── 0b. User-confirmed corrections override the statistical model ──────
         // The key is always the EN key sequence (layout-agnostic).
+        // Only apply when the target layout differs from the active one; if the
+        // user is already in the correct layout, the word was typed correctly.
         if let Some(&target_lang) = word_corrections.get(&en_lower) {
-            if target_lang == layout::LANG_RU && ru_ok && ru.chars().all(is_cyrillic_or_ua) {
+            if target_lang == active_lang {
+                // Already in the target layout — word is correct, no switch needed.
+            } else if target_lang == layout::LANG_RU && ru_ok && ru.chars().all(is_cyrillic_or_ua) {
                 let new_word = apply_case_correction(&self.entries, &ru);
                 return Some(SwitchAction {
                     backspaces,

@@ -567,9 +567,9 @@ impl WordBuffer {
             // Cross-Cyrillic switch RU → UA
             if score_ua.is_finite() {
                 let cross_threshold = base_threshold * if has_ua_markers(&ua_lower) {
-                    1.0
-                } else {
                     1.5
+                } else {
+                    2.0
                 };
                 if score_ua - score_ru > cross_threshold {
                     let new_word = apply_case_correction(&self.entries, &ua);
@@ -615,9 +615,9 @@ impl WordBuffer {
             // Cross-Cyrillic switch UA → RU
             if score_ru.is_finite() {
                 let cross_threshold = base_threshold * if has_ru_markers(&ru_lower) {
-                    1.0
-                } else {
                     1.5
+                } else {
+                    2.0
                 };
                 if score_ru - score_ua > cross_threshold {
                     let new_word = apply_case_correction(&self.entries, &ru);
@@ -667,7 +667,7 @@ impl WordBuffer {
             let ru_switches = ru_diff > ru_threshold;
             let ua_switches = ua_diff > ua_threshold;
 
-            if ru_switches && ua_switches {
+            if ru_switches || ua_switches {
                 let ru_in_dict = RU_COMMON_WORDS.binary_search(&ru_lower.as_str()).is_ok();
                 let ua_in_dict = UA_COMMON_WORDS.binary_search(&ua_lower.as_str()).is_ok();
                 
@@ -676,11 +676,15 @@ impl WordBuffer {
                 } else if ua_in_dict && !ru_in_dict {
                     false
                 } else if ru_lower == ua_lower {
-                    // Same spelling in both: prefer RU unless UA has a meaningful
-                    // score advantage (guards against corpus-size bias).
                     score_ua - score_ru < RU_UA_SCORE_MIN_DELTA
                 } else {
-                    score_ru >= score_ua
+                    // Spelled differently: if RU is a candidate, require UA to have
+                    // a significant score advantage (e.g. 1.3) to prevent false UA switches.
+                    if ru_candidate {
+                        score_ua - score_ru < RU_UA_SCORE_MIN_DELTA
+                    } else {
+                        false
+                    }
                 };
 
                 if to_ru {
@@ -700,22 +704,6 @@ impl WordBuffer {
                         original_word: en,
                     });
                 }
-            } else if ru_switches {
-                let new_word = apply_case_correction(&self.entries, &ru);
-                return Some(SwitchAction {
-                    backspaces,
-                    new_word,
-                    target_lang: layout::LANG_RU,
-                    original_word: en,
-                });
-            } else if ua_switches {
-                let new_word = apply_case_correction(&self.entries, &ua);
-                return Some(SwitchAction {
-                    backspaces,
-                    new_word,
-                    target_lang: layout::LANG_UA,
-                    original_word: en,
-                });
             }
         }
 

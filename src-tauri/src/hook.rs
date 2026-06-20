@@ -280,6 +280,11 @@ unsafe fn process_key(
                         action.target_lang
                     );
                 }
+
+                // Record user-confirmed correction so the model is bypassed
+                // next time.  Key: lowercase EN key sequence; value: target lang.
+                record_force_correction(&action.original_word, action.target_lang, lang);
+
                 save_undo(&action, None, lang);
                 buf.clear();
                 PREV_WORD_BUF.with(|p| *p.borrow_mut() = None);
@@ -297,6 +302,7 @@ unsafe fn process_key(
                                 boundary_vk.0
                             );
                         }
+                        record_force_correction(&action.original_word, action.target_lang, lang);
                         let mut force_action = action.clone();
                         force_action.backspaces += 1;
                         save_undo(&force_action, Some(boundary_vk), lang);
@@ -400,19 +406,36 @@ unsafe fn process_key(
                             if !is_common {
                                 SUCCESS_COUNTS.with(|sc| {
                                     let mut counts = sc.borrow_mut();
-                                    let entry = counts.entry(word.clone()).or_insert(0);
+                                    // Seed in-session count from persistent adaptive_counts
+                                    // the first time we see this word (entry absent).
+                                    let entry = counts.entry(word.clone()).or_insert_with(|| {
+                                        SETTINGS.get()
+                                            .and_then(|s| s.try_read().ok())
+                                            .and_then(|s| s.adaptive_counts.get(&word).copied())
+                                            .unwrap_or(0)
+                                    });
                                     *entry += 1;
-                                    if *entry >= 3 {
+                                    let new_count = *entry;
+                                    if new_count >= 3 {
                                         if let Some(settings_arc) = SETTINGS.get() {
                                             if let Ok(mut settings) = settings_arc.write() {
                                                 if !settings.ignored_words.contains(&word) {
                                                     settings.ignored_words.push(word.clone());
-                                                    crate::settings::save_async(&settings);
-                                                    log_info!("[ADAPTIVE] Added '{}' to ignored_words whitelist (typed 3 times)", word);
+                                                    log_info!("[ADAPTIVE] Added '{}' to ignored_words whitelist (typed 3× total)", word);
                                                 }
+                                                settings.adaptive_counts.remove(&word);
+                                                crate::settings::save_async(&settings);
                                             }
                                         }
                                         counts.remove(&word);
+                                    } else {
+                                        // Persist intermediate count so it survives a restart.
+                                        if let Some(settings_arc) = SETTINGS.get() {
+                                            if let Ok(mut settings) = settings_arc.write() {
+                                                settings.adaptive_counts.insert(word.clone(), new_count);
+                                                crate::settings::save_async(&settings);
+                                            }
+                                        }
                                     }
                                 });
                             }
@@ -519,6 +542,36 @@ unsafe fn process_key(
                 }
             }
             false
+        }
+    }
+}
+
+/// Record a user-confirmed force-switch as a persistent correction.
+/// `original_word` is the word in the layout that was active before the switch
+/// (EN keys when switching from EN, Cyrillic when switching from RU/UA).
+/// We normalise to lowercase EN key sequence as the canonical lookup key.
+fn record_force_correction(original_word: &str, target_lang: u16, from_lang: u16) {
+    // Only record corrections where the original typing was in EN layout so
+    // that we have a stable, layout-agnostic key to store.
+    if !crate::layout::hkl_is_english(from_lang) {
+        return;
+    }
+    let key = original_word.to_lowercase();
+    if key.is_empty() || key.chars().count() < 2 {
+        return;
+    }
+    if let Some(settings_arc) = SETTINGS.get() {
+        if let Ok(mut settings) = settings_arc.write() {
+            let prev = settings.word_corrections.get(&key).copied();
+            if prev != Some(target_lang) {
+                settings.word_corrections.insert(key.clone(), target_lang);
+                crate::settings::save_async(&settings);
+                log_info!(
+                    "[LEARN] Recorded correction: {:?} → lang={:#06x} (was {:?})",
+                    key, target_lang,
+                    prev.map(|l| format!("{:#06x}", l))
+                );
+            }
         }
     }
 }

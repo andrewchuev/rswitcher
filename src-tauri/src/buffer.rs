@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::{bigrams, layout};
 
 const COMMON_RU_SHORT: &[&str] = &[
@@ -78,11 +79,16 @@ pub struct DetectionSnapshot {
 }
 
 /// Minimum score advantage UA must have over RU to be chosen when the word is
-/// spelled identically in both languages.  The UA corpus is ~10× larger than
-/// the RU corpus, which causes UA bigram scores to be systematically 0.1–0.2
-/// higher for shared Slavic vocabulary.  A delta below this threshold is
-/// treated as a tie and resolved in favour of RU.
-const RU_UA_SCORE_MIN_DELTA: f32 = 0.1;
+/// spelled identically in both languages.  The UA corpus causes UA bigram
+/// scores to be systematically higher for shared Slavic vocabulary.  A delta
+/// below this threshold is treated as a tie and resolved in favour of RU.
+const RU_UA_SCORE_MIN_DELTA: f32 = 0.25;
+
+/// Stronger threshold used when the word has no Ukrainian-specific letters
+/// (і, ї, є, ґ) AND is spelled identically in both languages.  Without any
+/// disambiguating marker the word is almost certainly Russian or language-
+/// neutral, so we require a larger score gap before choosing UA.
+const RU_UA_SCORE_STRONG_DELTA: f32 = 0.40;
 
 pub fn switching_threshold(len: usize) -> f32 {
     if len <= 4 {
@@ -221,16 +227,24 @@ impl WordBuffer {
             }
 
             let to_ru = if ru_valid && ua_valid {
-                let ru_in_dict = RU_COMMON_WORDS.binary_search(&ru.to_lowercase().as_str()).is_ok();
-                let ua_in_dict = UA_COMMON_WORDS.binary_search(&ua.to_lowercase().as_str()).is_ok();
+                let ru_lower_fs = ru.to_lowercase();
+                let ua_lower_fs = ua.to_lowercase();
+                let ru_in_dict = RU_COMMON_WORDS.binary_search(&ru_lower_fs.as_str()).is_ok();
+                let ua_in_dict = UA_COMMON_WORDS.binary_search(&ua_lower_fs.as_str()).is_ok();
                 if ru_in_dict && !ua_in_dict {
                     true
                 } else if ua_in_dict && !ru_in_dict {
                     false
                 } else {
-                    let score_ru = bigrams::score_ru(&ru.to_lowercase());
-                    let score_ua = bigrams::score_ua(&ua.to_lowercase());
-                    score_ru >= score_ua
+                    let score_ru = bigrams::score_ru(&ru_lower_fs);
+                    let score_ua = bigrams::score_ua(&ua_lower_fs);
+                    // Apply the same delta logic as detect_impl_opt.
+                    let required_delta = if has_ua_markers(&ua_lower_fs) {
+                        RU_UA_SCORE_MIN_DELTA
+                    } else {
+                        RU_UA_SCORE_STRONG_DELTA
+                    };
+                    score_ua - score_ru < required_delta
                 }
             } else {
                 ru_valid
@@ -309,11 +323,11 @@ impl WordBuffer {
         let ua_lower = ua.to_lowercase();
 
         // ── 0. Check whitelisted / ignored words (Undo feedback loop) ────────
-        let (ignored_words, dev_exceptions) = crate::globals::SETTINGS
+        let (ignored_words, dev_exceptions, word_corrections) = crate::globals::SETTINGS
             .get()
             .and_then(|s| s.try_read().ok())
-            .map(|s| (s.ignored_words.clone(), s.dev_exceptions.clone()))
-            .unwrap_or_else(|| (Vec::new(), Vec::new()));
+            .map(|s| (s.ignored_words.clone(), s.dev_exceptions.clone(), s.word_corrections.clone()))
+            .unwrap_or_else(|| (Vec::new(), Vec::new(), HashMap::new()));
 
         let word_to_check = if layout::hkl_is_russian(active_lang) {
             &ru_lower
@@ -325,6 +339,42 @@ impl WordBuffer {
 
         if ignored_words.contains(word_to_check) {
             return None;
+        }
+
+        // ── 0b. User-confirmed corrections override the statistical model ──────
+        // The key is always the EN key sequence (layout-agnostic).
+        if let Some(&target_lang) = word_corrections.get(&en_lower) {
+            if target_lang == layout::LANG_RU && ru_ok && ru.chars().all(is_cyrillic_or_ua) {
+                let new_word = apply_case_correction(&self.entries, &ru);
+                return Some(SwitchAction {
+                    backspaces,
+                    new_word,
+                    target_lang,
+                    original_word: if layout::hkl_is_english(active_lang) { en.clone() }
+                                   else if layout::hkl_is_russian(active_lang) { ru.clone() }
+                                   else { ua.clone() },
+                });
+            } else if target_lang == layout::LANG_UA && ua_ok && ua.chars().all(is_cyrillic_or_ua) {
+                let new_word = apply_case_correction(&self.entries, &ua);
+                return Some(SwitchAction {
+                    backspaces,
+                    new_word,
+                    target_lang,
+                    original_word: if layout::hkl_is_english(active_lang) { en.clone() }
+                                   else if layout::hkl_is_russian(active_lang) { ru.clone() }
+                                   else { ua.clone() },
+                });
+            } else if target_lang == layout::LANG_EN_US && en_ok {
+                let new_word = apply_case_correction(&self.entries, &en);
+                return Some(SwitchAction {
+                    backspaces,
+                    new_word,
+                    target_lang,
+                    original_word: if layout::hkl_is_russian(active_lang) { ru.clone() }
+                                   else { ua.clone() },
+                });
+            }
+            // Correction present but translation invalid — fall through to model.
         }
 
         // ── 1. Check if the word is a valid word in the current layout ────────
@@ -676,12 +726,27 @@ impl WordBuffer {
                 } else if ua_in_dict && !ru_in_dict {
                     false
                 } else if ru_lower == ua_lower {
-                    score_ua - score_ru < RU_UA_SCORE_MIN_DELTA
+                    // Words spelled identically in both languages: require UA to
+                    // have a meaningful score advantage before choosing it.
+                    // Use a stronger threshold when no UA-specific letter is
+                    // present (і/ї/є/ґ), because without any marker the word is
+                    // almost certainly Russian or language-neutral.
+                    let required_delta = if has_ua_markers(&ua_lower) {
+                        RU_UA_SCORE_MIN_DELTA
+                    } else {
+                        RU_UA_SCORE_STRONG_DELTA
+                    };
+                    score_ua - score_ru < required_delta
                 } else {
-                    // Spelled differently: if RU is a candidate, require UA to have
-                    // a significant score advantage (e.g. 1.3) to prevent false UA switches.
+                    // Spelled differently: UA must overcome both the base delta
+                    // and the marker-absence penalty to prevent false UA switches.
                     if ru_candidate {
-                        score_ua - score_ru < RU_UA_SCORE_MIN_DELTA
+                        let required_delta = if has_ua_markers(&ua_lower) {
+                            RU_UA_SCORE_MIN_DELTA
+                        } else {
+                            RU_UA_SCORE_STRONG_DELTA
+                        };
+                        score_ua - score_ru < required_delta
                     } else {
                         false
                     }
@@ -1025,22 +1090,29 @@ mod tests {
         assert_eq!(action.new_word, "існування");
         buf.clear();
 
-        // User typed 'данніе' (which in EN keys is 'lfyyst') in UA layout (LANG_UA)
-        // RU candidate is 'данные' which is a common RU word.
-        push_en_chars(&mut buf, "lfyyst");
+        // User typed 'єто' (VK sequence "'nj") in UA layout (LANG_UA).
+        // '\'' → є(UA) / э(RU); both are Cyrillic.
+        // "это" IS in COMMON_RU_SHORT and has the RU marker 'э';
+        // "єто" is NOT in COMMON_UA_SHORT → short-word dictionary path
+        // fires and cross-switches UA → RU.
+        push_en_chars(&mut buf, "'nj");
         let action = buf.detect_mismatch(LANG_UA).expect("should cross-switch UA -> RU");
         assert_eq!(action.target_lang, LANG_RU);
-        assert_eq!(action.new_word, "данные");
+        assert_eq!(action.new_word, "это");
     }
 
     #[test]
     fn test_on_the_fly_switching() {
         let mut buf = WordBuffer::new();
-        // User types 'ghbdt' (first 5 chars of 'ghbdtn' -> 'приве' in RU layout)
-        push_en_chars(&mut buf, "ghbdt");
+        // User types the first 5 keys of "scyedfyyz" (→ "існування" in UA layout).
+        // 's'→і(UA)/ы(RU) ensures RU and UA translations differ, bypassing the
+        // `on_the_fly && ru_lower == ua_lower` guard.
+        // "існув" has UA marker 'і'; "ыснув" starts with 'ы' (rare in RU), so
+        // UA model wins and the on-the-fly switch fires.
+        push_en_chars(&mut buf, "scyed");
         let action = buf.detect_mismatch_on_the_fly(LANG_EN, 1.0).expect("should switch on-the-fly");
-        assert_eq!(action.target_lang, LANG_RU);
+        assert_eq!(action.target_lang, LANG_UA);
         assert_eq!(action.backspaces, 4);
-        assert_eq!(action.new_word, "приве");
+        assert_eq!(action.new_word, "існув");
     }
 }

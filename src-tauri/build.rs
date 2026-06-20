@@ -57,27 +57,41 @@ fn generate_language_models() {
     writeln!(f_bi, "pub static UA_TRIGRAMS: [f32; {}] = {};", ua_trigrams.len(), fmt_f32_array(&ua_trigrams)).expect("write failed");
 
     // 2. Generate common dictionaries
-    let en_words = get_common_words_mapped(&en_text, |c| {
+    let en_words = get_common_words_mapped(&en_text, 3000, |c| {
         let d = (c as u32).checked_sub('a' as u32)? as usize;
         if d < 26 { Some(d) } else { None }
     });
-    let mut ru_words = get_common_words_mapped(&ru_text, |c| {
+    let mut ru_words = get_common_words_mapped(&ru_text, 5000, |c| {
         let lc = if c == 'ё' { 'е' } else { c };
         let d = (lc as u32).checked_sub('а' as u32)? as usize;
         if d < 32 { Some(d) } else { None }
     });
     // Guarantee that high-frequency everyday words are always dictionary-protected
-    // even when the corpus has too few examples to rank them in the top 3000.
+    // even when the corpus has too few examples to rank them in the top N.
+    // These are either inflected forms rarely seen in text corpora, or words
+    // that are easily confused with Ukrainian equivalents.
     for w in &[
+        // Common everyday words
         "давай", "иногда", "куда", "нужно", "сейчас", "сюда",
         "теперь", "тогда", "туда",
+        // Russian-only forms (ы/э/ъ/ё markers — protect from false UA switch)
+        "были", "было", "быть", "вышел", "вышла", "давно", "делал",
+        "делать", "думал", "думать", "ехать", "жить", "знать",
+        "идти", "играть", "купить", "любить", "менять", "мочь",
+        "начать", "писать", "работать", "сказать", "слышать",
+        "стоять", "хотеть", "читать",
+        // Common inflected verb/noun endings unique to RU
+        "смотришь", "говоришь", "знаешь", "думаешь", "можешь",
+        "хочешь", "понимаешь", "слышишь",
+        // Russian preposition+case forms
+        "между", "через", "около", "перед",
     ] {
         if !ru_words.contains(&w.to_string()) {
             ru_words.push(w.to_string());
         }
     }
     ru_words.sort();
-    let ua_words = get_common_words_mapped(&ua_text, char_to_ua_index);
+    let ua_words = get_common_words_mapped(&ua_text, 3000, char_to_ua_index);
 
     let dict_path = std::path::Path::new(&out_dir).join("dictionaries_gen.rs");
     let mut f_dict = std::fs::File::create(&dict_path).expect("cannot create dictionaries_gen.rs");
@@ -160,7 +174,7 @@ fn build_bigram_table_mapped(text: &str, n: usize, char_map: impl Fn(char) -> Op
     counts.iter().map(|&c| (c + 1) as f32 / total as f32).collect()
 }
 
-fn get_common_words_mapped(text: &str, char_map: impl Fn(char) -> Option<usize>) -> Vec<String> {
+fn get_common_words_mapped(text: &str, limit: usize, char_map: impl Fn(char) -> Option<usize>) -> Vec<String> {
     use std::collections::HashMap;
     let mut counts = HashMap::new();
 
@@ -194,7 +208,7 @@ fn get_common_words_mapped(text: &str, char_map: impl Fn(char) -> Option<usize>)
 
     words.sort_by(|a, b| b.1.cmp(&a.1));
 
-    let mut top_words: Vec<String> = words.into_iter().take(3000).map(|(w, _)| w).collect();
+    let mut top_words: Vec<String> = words.into_iter().take(limit).map(|(w, _)| w).collect();
     top_words.sort();
     top_words
 }

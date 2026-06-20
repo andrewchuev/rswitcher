@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{mpsc, Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
@@ -53,6 +54,20 @@ pub struct Settings {
     pub window_width: Option<u32>,
     #[serde(default)]
     pub window_height: Option<u32>,
+
+    /// User-confirmed layout corrections: maps EN key sequence (lowercase) →
+    /// Windows LANGID of the preferred target language.  Populated automatically
+    /// when the user force-switches a word.  Checked before the statistical model
+    /// so the user's explicit preference always wins.
+    #[serde(default)]
+    pub word_corrections: HashMap<String, u16>,
+
+    /// Per-word success counts for the adaptive whitelisting mechanism.
+    /// When a word is typed N times without triggering a switch, it is added to
+    /// `ignored_words`.  This map persists counts across restarts so the
+    /// threshold is cumulative, not per-session.
+    #[serde(default)]
+    pub adaptive_counts: HashMap<String, u32>,
 }
 
 impl Default for Settings {
@@ -75,6 +90,8 @@ impl Default for Settings {
             window_y: None,
             window_width: None,
             window_height: None,
+            word_corrections: HashMap::new(),
+            adaptive_counts: HashMap::new(),
         }
     }
 }

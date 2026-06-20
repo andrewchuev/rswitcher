@@ -691,6 +691,59 @@ impl WordBuffer {
                 return None;
             }
 
+            // Dictionary shortcut for words whose EN transliteration contains
+            // non-alphabetic characters (e.g. ';' → 'ж' for "нужно"→"ye;yj").
+            // Such sequences cannot be real English words, so bypass the bigram
+            // threshold and rely on the common-word dictionary instead.
+            if !on_the_fly && len <= 6 && en_lower.chars().any(|c| !c.is_alphabetic()) {
+                let ru_in_dict = ru_candidate && RU_COMMON_WORDS.binary_search(&ru_lower.as_str()).is_ok();
+                let ua_in_dict = ua_candidate && UA_COMMON_WORDS.binary_search(&ua_lower.as_str()).is_ok();
+                if ru_in_dict || ua_in_dict {
+                    let to_ru: Option<bool> = resolve_cyrillic_preference(
+                        &preferred_cyrillic,
+                        ru_candidate,
+                        &ua_lower,
+                        || {
+                            if ru_in_dict && !ua_in_dict {
+                                true
+                            } else if ua_in_dict && !ru_in_dict {
+                                false
+                            } else {
+                                let score_ru = bigrams::score_ru(&ru_lower);
+                                let score_ua = bigrams::score_ua(&ua_lower);
+                                let required_delta = if has_ua_markers(&ua_lower) {
+                                    RU_UA_SCORE_MIN_DELTA
+                                } else {
+                                    RU_UA_SCORE_STRONG_DELTA
+                                };
+                                score_ua - score_ru < required_delta
+                            }
+                        },
+                    );
+                    match to_ru {
+                        Some(true) => {
+                            let new_word = apply_case_correction(&self.entries, &ru);
+                            return Some(SwitchAction {
+                                backspaces,
+                                new_word,
+                                target_lang: layout::LANG_RU,
+                                original_word: en,
+                            });
+                        }
+                        Some(false) => {
+                            let new_word = apply_case_correction(&self.entries, &ua);
+                            return Some(SwitchAction {
+                                backspaces,
+                                new_word,
+                                target_lang: layout::LANG_UA,
+                                original_word: en,
+                            });
+                        }
+                        None => return None,
+                    }
+                }
+            }
+
             let score_ru = if ru_candidate { bigrams::score_ru(&ru_lower) } else { f32::NEG_INFINITY };
             let score_ua = if ua_candidate { bigrams::score_ua(&ua_lower) } else { f32::NEG_INFINITY };
 
@@ -1130,7 +1183,20 @@ mod tests {
     }
 
     #[test]
-    fn test_on_the_fly_switching() {
+    fn nujno_with_punct_en_transliteration_switches_at_boundary() {
+        // "нужно" → "ye;yj" in EN layout (';' = VK_OEM_1 maps to 'ж' in RU).
+        // Bigram delta is too small (~0.26) to cross the threshold; the punct
+        // dict shortcut should catch it instead.
+        let mut buf = WordBuffer::new();
+        push_en_chars(&mut buf, "ye;yj");
+        let action = buf.detect_mismatch(LANG_EN).expect("punct dict shortcut should switch нужно");
+        assert_eq!(action.target_lang, LANG_RU);
+        assert_eq!(action.new_word.to_lowercase(), "нужно");
+        assert_eq!(action.backspaces, 5);
+    }
+
+    #[test]
+    fn on_the_fly_switching() {
         let mut buf = WordBuffer::new();
         // User types the first 5 keys of "scyedfyyz" (→ "існування" in UA layout).
         // 's'→і(UA)/ы(RU) ensures RU and UA translations differ, bypassing the

@@ -400,7 +400,19 @@ unsafe fn process_key(
                         };
 
                         if let Some((word, is_common)) = word_to_check {
-                            if !is_common {
+                            // Only count toward the adaptive whitelist when the
+                            // rival layout actually scored higher than the active
+                            // one. If the current layout wins outright (like
+                            // "функционал" in RU with score delta ~4.5), the model
+                            // was never tempted to switch — whitelisting is useless.
+                            let rival_was_competitive = if layout::hkl_is_russian(lang) {
+                                s.score_en > s.score_ru
+                            } else if layout::hkl_is_ukrainian(lang) {
+                                s.score_en > s.score_ua
+                            } else {
+                                s.score_ru.max(s.score_ua) > s.score_en
+                            };
+                            if !is_common && rival_was_competitive {
                                 SUCCESS_COUNTS.with(|sc| {
                                     let mut counts = sc.borrow_mut();
                                     // Seed in-session count from persistent adaptive_counts

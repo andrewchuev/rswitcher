@@ -57,10 +57,23 @@ fn generate_language_models() {
     writeln!(f_bi, "pub static UA_TRIGRAMS: [f32; {}] = {};", ua_trigrams.len(), fmt_f32_array(&ua_trigrams)).expect("write failed");
 
     // 2. Generate common dictionaries
-    let en_words = get_common_words_mapped(&en_text, 3000, |c| {
+    let mut en_words = get_common_words_mapped(&en_text, 3000, |c| {
         let d = (c as u32).checked_sub('a' as u32)? as usize;
         if d < 26 { Some(d) } else { None }
     });
+    // Tech abbreviations with unusual bigram transitions (j→consonant, x-ending)
+    // that score poorly under the EN model but are valid EN sequences.
+    // "jpeg" is a confirmed false-positive: score_en=-13.11 because j→p is
+    // almost absent from general-text corpora, letting Cyrillic scores win.
+    for w in &[
+        "docx", "jpeg", "jira", "jest", "json", "jwt",
+        "pptx", "xlsx",
+    ] {
+        if !en_words.contains(&w.to_string()) {
+            en_words.push(w.to_string());
+        }
+    }
+    en_words.sort();
     let mut ru_words = get_common_words_mapped(&ru_text, 5000, |c| {
         let lc = if c == 'ё' { 'е' } else { c };
         let d = (lc as u32).checked_sub('а' as u32)? as usize;

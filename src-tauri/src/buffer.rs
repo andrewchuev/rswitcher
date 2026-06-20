@@ -1183,6 +1183,15 @@ mod tests {
     }
 
     #[test]
+    fn jpeg_in_en_layout_does_not_switch() {
+        // "jpeg" has a terrible EN bigram score (j→p is rare in text corpora)
+        // but is a valid English abbreviation — must not switch to Cyrillic.
+        let mut buf = WordBuffer::new();
+        push_en_word(&mut buf, "jpeg");
+        assert!(buf.detect_mismatch(LANG_EN).is_none(), "jpeg must not switch");
+    }
+
+    #[test]
     fn nujno_with_punct_en_transliteration_switches_at_boundary() {
         // "нужно" → "ye;yj" in EN layout (';' = VK_OEM_1 maps to 'ж' in RU).
         // Bigram delta is too small (~0.26) to cross the threshold; the punct

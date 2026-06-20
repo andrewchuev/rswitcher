@@ -4,10 +4,10 @@ use windows::Win32::{
     Foundation::{LPARAM, WPARAM},
     UI::{
         Input::KeyboardAndMouse::{
-            GetKeyboardLayoutList, SendInput, HKL,
+            GetKeyboardLayoutList, GetKeyState, SendInput, HKL,
             INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
             KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
-            VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_SHIFT, VK_LEFT,
+            VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_LWIN, VK_RWIN, VK_SHIFT, VK_LEFT,
         },
         WindowsAndMessaging::{
             GetForegroundWindow, PostMessageW, WM_INPUTLANGCHANGEREQUEST,
@@ -40,6 +40,24 @@ pub fn perform_switch(action: &SwitchAction, boundary_vk: Option<VIRTUAL_KEY>) {
         .unwrap_or(false);
 
     let mut inputs: Vec<INPUT> = Vec::new();
+
+    // ── 0. Release Win key if held ────────────────────────────────────────────
+    // When the force/undo hotkey uses Win as a modifier, the Win key is
+    // physically held while we send backspaces.  Windows delivers injected
+    // keys as WM_SYSKEYDOWN when Win is down, so apps see Win+Backspace
+    // instead of plain Backspace and ignore it as a text-edit key.
+    // Fix: inject VK_E8 (suppresses Start Menu) then release both Win keys
+    // before the backspaces, all in the same atomic SendInput batch.
+    unsafe {
+        let lwin = GetKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0;
+        let rwin = GetKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0;
+        if lwin || rwin {
+            inputs.push(make_vk(VIRTUAL_KEY(0xE8), KEYBD_EVENT_FLAGS(0)));
+            inputs.push(make_vk(VIRTUAL_KEY(0xE8), KEYEVENTF_KEYUP));
+            if lwin { inputs.push(make_vk(VK_LWIN, KEYEVENTF_KEYUP)); }
+            if rwin { inputs.push(make_vk(VK_RWIN, KEYEVENTF_KEYUP)); }
+        }
+    }
 
     // ── 1. Erase ─────────────────────────────────────────────────────────────
     if action.backspaces > 0 {

@@ -82,7 +82,7 @@ pub struct DetectionSnapshot {
 /// the RU corpus, which causes UA bigram scores to be systematically 0.1–0.2
 /// higher for shared Slavic vocabulary.  A delta below this threshold is
 /// treated as a tie and resolved in favour of RU.
-const RU_UA_SCORE_MIN_DELTA: f32 = 0.3;
+const RU_UA_SCORE_MIN_DELTA: f32 = 0.1;
 
 pub fn switching_threshold(len: usize) -> f32 {
     if len <= 4 {
@@ -639,6 +639,10 @@ impl WordBuffer {
             let ua_candidate = ua_ok && ua.chars().all(is_cyrillic_or_ua);
 
             if !ru_candidate && !ua_candidate {
+                return None;
+            }
+
+            if on_the_fly && ru_lower == ua_lower {
                 return None;
             }
 

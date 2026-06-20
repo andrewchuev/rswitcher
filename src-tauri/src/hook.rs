@@ -76,7 +76,7 @@ unsafe fn hook_proc_inner(
 
     let kb = &*(l_param.0 as *const KBDLLHOOKSTRUCT);
 
-    if kb.flags & LLKHF_INJECTED != KBDLLHOOKSTRUCT_FLAGS(0) {
+    if kb.flags & LLKHF_INJECTED != KBDLLHOOKSTRUCT_FLAGS(0) && kb.dwExtraInfo == 0x53574954 {
         return CallNextHookEx(None, n_code, w_param, l_param);
     }
 

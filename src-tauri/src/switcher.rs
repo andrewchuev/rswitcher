@@ -145,7 +145,7 @@ fn make_vk(vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> INPUT {
                 wScan:       0,
                 dwFlags:     flags,
                 time:        0,
-                dwExtraInfo: 0,
+                dwExtraInfo: 0x53574954,
             },
         },
     }
@@ -162,7 +162,7 @@ fn make_unicode_unit(unit: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
                 wScan:       unit,
                 dwFlags:     KEYEVENTF_UNICODE | flags,
                 time:        0,
-                dwExtraInfo: 0,
+                dwExtraInfo: 0x53574954,
             },
         },
     }

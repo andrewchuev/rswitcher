@@ -12,6 +12,7 @@ pub mod logger;
 mod settings;
 mod switcher;
 mod tray;
+mod benchmark;
 
 use std::sync::{Arc, RwLock};
 use tauri::Manager;
@@ -44,6 +45,12 @@ fn is_position_visible(x: i32, y: i32, app: &tauri::App) -> bool {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 && (args[1] == "benchmark" || args[1] == "--benchmark") {
+        benchmark::run();
+        return;
+    }
+
     logger::init();
     logger::setup_panic_hook();
 

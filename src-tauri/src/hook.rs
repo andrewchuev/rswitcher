@@ -279,11 +279,8 @@ unsafe fn process_key(
                         lang, s.en_word, s.ru_word, s.ua_word, s.score_en, s.score_ru, s.score_ua,
                         action.target_lang
                     );
+                    record_force_correction(&s.en_word, action.target_lang);
                 }
-
-                // Record user-confirmed correction so the model is bypassed
-                // next time.  Key: lowercase EN key sequence; value: target lang.
-                record_force_correction(&action.original_word, action.target_lang, lang);
 
                 save_undo(&action, None, lang);
                 buf.clear();
@@ -301,8 +298,8 @@ unsafe fn process_key(
                                 action.target_lang,
                                 boundary_vk.0
                             );
+                            record_force_correction(&s.en_word, action.target_lang);
                         }
-                        record_force_correction(&action.original_word, action.target_lang, lang);
                         let mut force_action = action.clone();
                         force_action.backspaces += 1;
                         save_undo(&force_action, Some(boundary_vk), lang);
@@ -547,16 +544,10 @@ unsafe fn process_key(
 }
 
 /// Record a user-confirmed force-switch as a persistent correction.
-/// `original_word` is the word in the layout that was active before the switch
-/// (EN keys when switching from EN, Cyrillic when switching from RU/UA).
-/// We normalise to lowercase EN key sequence as the canonical lookup key.
-fn record_force_correction(original_word: &str, target_lang: u16, from_lang: u16) {
-    // Only record corrections where the original typing was in EN layout so
-    // that we have a stable, layout-agnostic key to store.
-    if !crate::layout::hkl_is_english(from_lang) {
-        return;
-    }
-    let key = original_word.to_lowercase();
+/// `en_key` must be the EN keyboard sequence (VK codes → EN chars) — always
+/// available from the detection snapshot regardless of the active layout.
+fn record_force_correction(en_key: &str, target_lang: u16) {
+    let key = en_key.to_lowercase();
     if key.is_empty() || key.chars().count() < 2 {
         return;
     }

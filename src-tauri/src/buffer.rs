@@ -387,6 +387,9 @@ impl WordBuffer {
         }
 
         // ── 3. Check for single-letter words (1 char) ────────────────────────
+        // Only switch Cyrillic→EN for unambiguous single-char cases ('a', 'i').
+        // EN→Cyrillic is intentionally skipped: too many common EN letters (d, r,
+        // c, b, f, j, e, z) map to Russian prepositions, causing false positives.
         if !on_the_fly && len == 1 {
             let common_ru_single = ["в", "и", "а", "о", "с", "у", "я", "к"];
             let common_ua_single = ["в", "і", "а", "о", "у", "я", "є", "з"];
@@ -411,36 +414,6 @@ impl WordBuffer {
                         target_lang: layout::LANG_EN_US,
                         original_word: ua,
                     });
-                }
-            } else if layout::hkl_is_english(active_lang) {
-                if en_ok && !common_en_single.contains(&en_lower.as_str()) {
-                    let to_ru = ru_ok && common_ru_single.contains(&ru_lower.as_str());
-                    let to_ua = ua_ok && common_ua_single.contains(&ua_lower.as_str());
-                    if to_ru && to_ua {
-                        let new_word = apply_case_correction(&self.entries, &ru);
-                        return Some(SwitchAction {
-                            backspaces,
-                            new_word,
-                            target_lang: layout::LANG_RU,
-                            original_word: en,
-                        });
-                    } else if to_ru {
-                        let new_word = apply_case_correction(&self.entries, &ru);
-                        return Some(SwitchAction {
-                            backspaces,
-                            new_word,
-                            target_lang: layout::LANG_RU,
-                            original_word: en,
-                        });
-                    } else if to_ua {
-                        let new_word = apply_case_correction(&self.entries, &ua);
-                        return Some(SwitchAction {
-                            backspaces,
-                            new_word,
-                            target_lang: layout::LANG_UA,
-                            original_word: en,
-                        });
-                    }
                 }
             }
             return None;
@@ -968,18 +941,21 @@ mod tests {
     #[test]
     fn single_letter_words_switch() {
         let mut buf = WordBuffer::new();
-        
-        buf.push(0x44, false); // 'd' -> 'в'
-        let action = buf.detect_mismatch(LANG_EN).expect("should switch single char d -> в");
-        assert_eq!(action.target_lang, LANG_RU);
-        assert_eq!(action.new_word, "в");
+
+        // EN→Cyrillic single-char switching is disabled: 'd' (→ RU 'в') must NOT switch.
+        buf.push(0x44, false); // 'd'
+        assert!(buf.detect_mismatch(LANG_EN).is_none(), "single 'd' in EN layout must not switch");
         buf.clear();
 
+        // 'a' is in common_en_single — also must not switch from EN layout.
         buf.push(0x41, false); // 'a'
         assert!(buf.detect_mismatch(LANG_EN).is_none());
         buf.clear();
 
-        buf.push(0x41, false); // 'a' maps to 'ф'
+        // Cyrillic→EN single-char switching is still active:
+        // 'a' in RU layout maps to 'ф', which is not a common RU single-char word,
+        // and the EN result 'a' IS in common_en_single → switch to EN.
+        buf.push(0x41, false); // 'a' key in RU layout → 'ф' which is not a RU word
         let action = buf.detect_mismatch(LANG_RU).expect("should switch single char ф -> a");
         assert_eq!(action.target_lang, LANG_EN);
         assert_eq!(action.new_word, "a");

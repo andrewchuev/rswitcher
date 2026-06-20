@@ -133,10 +133,7 @@ main thread (Tauri v2 / WebView2 runtime)
 2. **Boundary** — on Space / Enter / Tab / non-translatable key, the buffer is evaluated.
 3. **Translate** — all buffered VK codes are mapped through EN, RU, and UA layout tables to produce candidate strings.
 4. **Dictionary Check** — checks if the candidate is in the common word dictionary (`EN_COMMON_WORDS`, `RU_COMMON_WORDS`, or `UA_COMMON_WORDS`) or user whitelist (`ignored_words`). If yes, layout switching is bypassed.
-5. **Context Check** — if the active window matches developer exceptions (`dev_exceptions`):
-   - Minimum switching length is raised from 4 to 5 characters.
-   - Sensitivity threshold required to trigger a switch is multiplied by 1.5x.
-6. **Score** — each candidate is scored with a per-bigram log-probability under its respective language model:
+5. **Score** — each candidate is scored with a per-bigram log-probability under its respective language model:
    ```
    score = Σ ln P(cₙ | cₙ₋₁)  /  (len - 1)
    ```
@@ -155,7 +152,6 @@ Settings are stored in `%APPDATA%\rswitcher\config.json`:
 {
   "enabled": true,
   "exceptions": ["windowsterminal.exe"],
-  "dev_exceptions": ["code.exe", "idea64.exe", "visualstudio.exe", "cargo.exe"],
   "ignored_words": [],
   "hotkey_enabled": true,
   "hotkey_vk": 16,
@@ -179,7 +175,7 @@ Each run creates a file `%APPDATA%\rswitcher\logs\rswitcher_<unix>_<pid>.log`. E
 [2026-06-19 21:56:15.519] [  0:00.000] [main] [INFO] === RSwitcher started (pid=1234, path="C:\\Program Files\\RSwitcher\\rswitcher.exe") ===
 [2026-06-19 21:56:15.525] [  0:00.006] [main] [INFO] OS: Windows 11 Pro (Build 22631)
 [2026-06-19 21:56:15.530] [  0:00.011] [main] [INFO] Active keyboard layouts: [0x0409 (English), 0x0419 (Russian), 0x0422 (Ukrainian)]
-[2026-06-19 21:56:15.535] [  0:00.016] [main] [INFO] settings: enabled=true exceptions=["windowsterminal.exe"] dev_exceptions=["code.exe"] ignored_words_count=0 sensitivity=1.0 use_selection_replace=false
+[2026-06-19 21:56:15.535] [  0:00.016] [main] [INFO] settings: enabled=true exceptions=["windowsterminal.exe"] ignored_words_count=0 sensitivity=1.0 use_selection_replace=false
 [2026-06-19 21:57:44.846] [  1:29.327] [rswitcher-hook] [INFO] [DETECT] lang=0x0409 en="ghbdtn" ru="привет" ua="гривдн" score_en=-7.29 score_ru=-5.21 score_ua=-9.30 → SWITCH_EN→RU boundary=0x20
 [2026-06-19 21:57:55.120] [  1:39.601] [rswitcher-hook] [INFO] [DETECT] lang=0x0409 en="scyedfyyz" ru="сыудукыннз" ua="існування" score_en=-8.45 score_ru=-12.30 score_ua=-4.12 → SWITCH_EN→UA boundary=0x20
 [2026-06-19 21:58:33.626] [  2:18.107] [rswitcher-hook] [INFO] [DETECT] lang=0x0419 en="hello" ru="руддщ" ua="рллли" score_en=-5.28 score_ru=-7.11 score_ua=-8.92 → SWITCH_RU→EN boundary=0x20

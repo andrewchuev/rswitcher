@@ -608,11 +608,6 @@ input:checked + .slider:before {
   color: #ef4444;
 }
 
-.card-dev-exclusions {
-  display: flex;
-  flex-direction: column;
-}
-
 /* ── Tabs Layout & Buttons ───────────────────────────────────────────────── */
 .tabs-nav {
   display: flex;

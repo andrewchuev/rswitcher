@@ -323,11 +323,11 @@ impl WordBuffer {
         let ua_lower = ua.to_lowercase();
 
         // ── 0. Check whitelisted / ignored words (Undo feedback loop) ────────
-        let (ignored_words, dev_exceptions, word_corrections) = crate::globals::SETTINGS
+        let (ignored_words, word_corrections) = crate::globals::SETTINGS
             .get()
             .and_then(|s| s.try_read().ok())
-            .map(|s| (s.ignored_words.clone(), s.dev_exceptions.clone(), s.word_corrections.clone()))
-            .unwrap_or_else(|| (Vec::new(), Vec::new(), HashMap::new()));
+            .map(|s| (s.ignored_words.clone(), s.word_corrections.clone()))
+            .unwrap_or_else(|| (Vec::new(), HashMap::new()));
 
         let word_to_check = if layout::hkl_is_russian(active_lang) {
             &ru_lower
@@ -386,21 +386,8 @@ impl WordBuffer {
             return None;
         }
 
-        // ── 2. Check active app specific adjustments ─────────────────────────
-        let active_exe = crate::exceptions::foreground_exe_name();
-        let is_dev_app = active_exe
-            .as_ref()
-            .map(|exe| dev_exceptions.contains(exe))
-            .unwrap_or(false);
-
-        let adjusted_min_len = if is_dev_app { 5 } else { 4 };
-        let dev_threshold_multiplier = if is_dev_app { 1.5 } else { 1.0 };
-
         // ── 3. Check for single-letter words (1 char) ────────────────────────
         if !on_the_fly && len == 1 {
-            if is_dev_app {
-                return None;
-            }
             let common_ru_single = ["в", "и", "а", "о", "с", "у", "я", "к"];
             let common_ua_single = ["в", "і", "а", "о", "у", "я", "є", "з"];
             let common_en_single = ["a", "i"];
@@ -461,9 +448,6 @@ impl WordBuffer {
 
         // ── 4. Dictionary-based check for short words (2-3 chars) ─────────────
         if !on_the_fly && (len == 2 || len == 3) {
-            if is_dev_app {
-                return None;
-            }
             if layout::hkl_is_russian(active_lang) {
                 if ru_ok && en_ok {
                     let is_common_en = COMMON_EN_SHORT.binary_search(&en_lower.as_str()).is_ok();
@@ -576,12 +560,12 @@ impl WordBuffer {
         }
 
         // ── 5. Standard bigram/trigram language-model check (>= 4 chars) ──────
-        let min_len = if on_the_fly { 5 } else { adjusted_min_len };
+        let min_len = if on_the_fly { 5 } else { 4 };
         if len < min_len {
             return None;
         }
 
-        let base_threshold = (switching_threshold(len) / sensitivity) * dev_threshold_multiplier;
+        let base_threshold = switching_threshold(len) / sensitivity;
 
         if layout::hkl_is_russian(active_lang) {
             if !ru_ok || !en_ok {

@@ -73,10 +73,9 @@ fn main() {
         log_info!("OS: {}", logger::get_windows_version());
         logger::log_keyboard_layouts();
         log_info!(
-            "settings: enabled={} exceptions={:?} dev_exceptions={:?} ignored_words_count={} sensitivity={:.1} use_selection_replace={}",
+            "settings: enabled={} exceptions={:?} ignored_words_count={} sensitivity={:.1} use_selection_replace={}",
             s.enabled,
             s.exceptions,
-            s.dev_exceptions,
             s.ignored_words.len(),
             s.sensitivity,
             s.use_selection_replace

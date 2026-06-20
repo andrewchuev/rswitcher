@@ -4,6 +4,21 @@ use std::sync::{mpsc, Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
 use crate::log_error;
 
+/// Which Cyrillic layout to prefer when the statistical model is ambiguous.
+///
+/// `Auto` (default) applies Variant-B heuristics: a word is only assigned to
+/// Ukrainian when it contains at least one UA-specific letter (і/ї/є/ґ);
+/// otherwise Russian is chosen.  `Ru` and `Ua` are explicit overrides that
+/// skip the heuristic entirely and always resolve ties in the stated direction.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PreferredCyrillic {
+    #[default]
+    Auto,
+    Ru,
+    Ua,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default = "bool_true")]
@@ -65,6 +80,12 @@ pub struct Settings {
     /// threshold is cumulative, not per-session.
     #[serde(default)]
     pub adaptive_counts: HashMap<String, u32>,
+
+    /// Preferred Cyrillic layout for ambiguous EN→Cyrillic detections.
+    /// `auto` (default): require UA-specific letters to choose Ukrainian.
+    /// `ru` / `ua`: always resolve ties in that direction.
+    #[serde(default)]
+    pub preferred_cyrillic: PreferredCyrillic,
 }
 
 impl Default for Settings {
@@ -88,6 +109,7 @@ impl Default for Settings {
             window_height: None,
             word_corrections: HashMap::new(),
             adaptive_counts: HashMap::new(),
+            preferred_cyrillic: PreferredCyrillic::Auto,
         }
     }
 }

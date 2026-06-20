@@ -226,46 +226,65 @@ impl WordBuffer {
                 return None;
             }
 
-            let to_ru = if ru_valid && ua_valid {
+            let preferred_cyrillic = crate::globals::SETTINGS
+                .get()
+                .and_then(|s| s.try_read().ok())
+                .map(|s| s.preferred_cyrillic.clone())
+                .unwrap_or(crate::settings::PreferredCyrillic::Auto);
+
+            let to_ru: Option<bool> = if ru_valid && ua_valid {
                 let ru_lower_fs = ru.to_lowercase();
                 let ua_lower_fs = ua.to_lowercase();
                 let ru_in_dict = RU_COMMON_WORDS.binary_search(&ru_lower_fs.as_str()).is_ok();
                 let ua_in_dict = UA_COMMON_WORDS.binary_search(&ua_lower_fs.as_str()).is_ok();
-                if ru_in_dict && !ua_in_dict {
-                    true
-                } else if ua_in_dict && !ru_in_dict {
-                    false
-                } else {
-                    let score_ru = bigrams::score_ru(&ru_lower_fs);
-                    let score_ua = bigrams::score_ua(&ua_lower_fs);
-                    // Apply the same delta logic as detect_impl_opt.
-                    let required_delta = if has_ua_markers(&ua_lower_fs) {
-                        RU_UA_SCORE_MIN_DELTA
-                    } else {
-                        RU_UA_SCORE_STRONG_DELTA
-                    };
-                    score_ua - score_ru < required_delta
-                }
+                resolve_cyrillic_preference(
+                    &preferred_cyrillic,
+                    true,
+                    &ua_lower_fs,
+                    || {
+                        if ru_in_dict && !ua_in_dict {
+                            true
+                        } else if ua_in_dict && !ru_in_dict {
+                            false
+                        } else {
+                            let score_ru = bigrams::score_ru(&ru_lower_fs);
+                            let score_ua = bigrams::score_ua(&ua_lower_fs);
+                            let required_delta = if has_ua_markers(&ua_lower_fs) {
+                                RU_UA_SCORE_MIN_DELTA
+                            } else {
+                                RU_UA_SCORE_STRONG_DELTA
+                            };
+                            score_ua - score_ru < required_delta
+                        }
+                    },
+                )
             } else {
-                ru_valid
+                // Only one candidate valid — use it regardless of preference.
+                Some(ru_valid)
             };
 
-            if to_ru {
-                let new_word = apply_case_correction(&self.entries, &ru);
-                Some(SwitchAction {
-                    backspaces: self.len(),
-                    new_word,
-                    target_lang: layout::LANG_RU,
-                    original_word: en,
-                })
-            } else {
-                let new_word = apply_case_correction(&self.entries, &ua);
-                Some(SwitchAction {
-                    backspaces: self.len(),
-                    new_word,
-                    target_lang: layout::LANG_UA,
-                    original_word: en,
-                })
+            match to_ru {
+                Some(true) => {
+                    let new_word = apply_case_correction(&self.entries, &ru);
+                    Some(SwitchAction {
+                        backspaces: self.len(),
+                        new_word,
+                        target_lang: layout::LANG_RU,
+                        original_word: en,
+                    })
+                }
+                Some(false) => {
+                    let new_word = apply_case_correction(&self.entries, &ua);
+                    Some(SwitchAction {
+                        backspaces: self.len(),
+                        new_word,
+                        target_lang: layout::LANG_UA,
+                        original_word: en,
+                    })
+                }
+                // Both blocked by preference (shouldn't happen when only one is valid,
+                // but guard against it anyway).
+                None => None,
             }
         } else {
             None
@@ -323,11 +342,11 @@ impl WordBuffer {
         let ua_lower = ua.to_lowercase();
 
         // ── 0. Check whitelisted / ignored words (Undo feedback loop) ────────
-        let (ignored_words, word_corrections) = crate::globals::SETTINGS
+        let (ignored_words, word_corrections, preferred_cyrillic) = crate::globals::SETTINGS
             .get()
             .and_then(|s| s.try_read().ok())
-            .map(|s| (s.ignored_words.clone(), s.word_corrections.clone()))
-            .unwrap_or_else(|| (Vec::new(), HashMap::new()));
+            .map(|s| (s.ignored_words.clone(), s.word_corrections.clone(), s.preferred_cyrillic.clone()))
+            .unwrap_or_else(|| (Vec::new(), HashMap::new(), crate::settings::PreferredCyrillic::Auto));
 
         let word_to_check = if layout::hkl_is_russian(active_lang) {
             &ru_lower
@@ -485,18 +504,19 @@ impl WordBuffer {
 
                     if !is_common_en {
                         if is_common_ru && is_common_ua {
-                            let score_ru = bigrams::score_ru(&ru_lower);
-                            let score_ua = bigrams::score_ua(&ua_lower);
-                            // Identical spelling in both languages: the UA corpus is
-                            // larger, making UA scores systematically ~0.1–0.2 higher
-                            // for shared vocabulary.  Require a meaningful delta before
-                            // choosing UA; otherwise default to RU.
-                            let prefer_ru = if ru_lower == ua_lower {
-                                score_ua - score_ru < RU_UA_SCORE_MIN_DELTA
-                            } else {
-                                score_ru >= score_ua
-                            };
-                            if prefer_ru {
+                            let to_ru = resolve_cyrillic_preference(
+                                &preferred_cyrillic, true, &ua_lower,
+                                || {
+                                    let score_ru = bigrams::score_ru(&ru_lower);
+                                    let score_ua = bigrams::score_ua(&ua_lower);
+                                    if ru_lower == ua_lower {
+                                        score_ua - score_ru < RU_UA_SCORE_MIN_DELTA
+                                    } else {
+                                        score_ru >= score_ua
+                                    }
+                                },
+                            );
+                            if let Some(true) = to_ru {
                                 let new_word = apply_case_correction(&self.entries, &ru);
                                 return Some(SwitchAction {
                                     backspaces,
@@ -504,7 +524,7 @@ impl WordBuffer {
                                     target_lang: layout::LANG_RU,
                                     original_word: en,
                                 });
-                            } else {
+                            } else if to_ru == Some(false) {
                                 let new_word = apply_case_correction(&self.entries, &ua);
                                 return Some(SwitchAction {
                                     backspaces,
@@ -522,13 +542,21 @@ impl WordBuffer {
                                     original_word: en,
                             });
                         } else if is_common_ua {
-                            let new_word = apply_case_correction(&self.entries, &ua);
-                            return Some(SwitchAction {
+                            // Variant B (Auto): require UA-specific letters for UA
+                            let allow_ua = match &preferred_cyrillic {
+                                crate::settings::PreferredCyrillic::Ua => true,
+                                crate::settings::PreferredCyrillic::Ru => false,
+                                crate::settings::PreferredCyrillic::Auto => has_ua_markers(&ua_lower),
+                            };
+                            if allow_ua {
+                                let new_word = apply_case_correction(&self.entries, &ua);
+                                return Some(SwitchAction {
                                     backspaces,
                                     new_word,
                                     target_lang: layout::LANG_UA,
                                     original_word: en,
-                            });
+                                });
+                            }
                         }
                     }
                 }
@@ -576,7 +604,13 @@ impl WordBuffer {
             }
 
             // Cross-Cyrillic switch RU → UA
-            if score_ua.is_finite() {
+            // With Ru preference: never; with Auto: require UA markers.
+            let allow_cross_ru_ua = match &preferred_cyrillic {
+                crate::settings::PreferredCyrillic::Ru => false,
+                crate::settings::PreferredCyrillic::Auto => has_ua_markers(&ua_lower),
+                crate::settings::PreferredCyrillic::Ua => true,
+            };
+            if allow_cross_ru_ua && score_ua.is_finite() {
                 let cross_threshold = base_threshold * if has_ua_markers(&ua_lower) {
                     1.5
                 } else {
@@ -681,39 +715,33 @@ impl WordBuffer {
             if ru_switches || ua_switches {
                 let ru_in_dict = RU_COMMON_WORDS.binary_search(&ru_lower.as_str()).is_ok();
                 let ua_in_dict = UA_COMMON_WORDS.binary_search(&ua_lower.as_str()).is_ok();
-                
-                let to_ru = if ru_in_dict && !ua_in_dict {
-                    true
-                } else if ua_in_dict && !ru_in_dict {
-                    false
-                } else if ru_lower == ua_lower {
-                    // Words spelled identically in both languages: require UA to
-                    // have a meaningful score advantage before choosing it.
-                    // Use a stronger threshold when no UA-specific letter is
-                    // present (і/ї/є/ґ), because without any marker the word is
-                    // almost certainly Russian or language-neutral.
-                    let required_delta = if has_ua_markers(&ua_lower) {
-                        RU_UA_SCORE_MIN_DELTA
-                    } else {
-                        RU_UA_SCORE_STRONG_DELTA
-                    };
-                    score_ua - score_ru < required_delta
-                } else {
-                    // Spelled differently: UA must overcome both the base delta
-                    // and the marker-absence penalty to prevent false UA switches.
-                    if ru_candidate {
-                        let required_delta = if has_ua_markers(&ua_lower) {
-                            RU_UA_SCORE_MIN_DELTA
-                        } else {
-                            RU_UA_SCORE_STRONG_DELTA
-                        };
-                        score_ua - score_ru < required_delta
-                    } else {
-                        false
-                    }
-                };
 
-                if to_ru {
+                let to_ru: Option<bool> = resolve_cyrillic_preference(
+                    &preferred_cyrillic,
+                    ru_candidate,
+                    &ua_lower,
+                    || {
+                        if ru_in_dict && !ua_in_dict {
+                            true
+                        } else if ua_in_dict && !ru_in_dict {
+                            false
+                        } else {
+                            // Both or neither in dict: bigram delta with marker penalty.
+                            let required_delta = if has_ua_markers(&ua_lower) {
+                                RU_UA_SCORE_MIN_DELTA
+                            } else {
+                                RU_UA_SCORE_STRONG_DELTA
+                            };
+                            if ru_candidate {
+                                score_ua - score_ru < required_delta
+                            } else {
+                                false
+                            }
+                        }
+                    },
+                );
+
+                if to_ru == Some(true) {
                     let new_word = apply_case_correction(&self.entries, &ru);
                     return Some(SwitchAction {
                         backspaces,
@@ -721,7 +749,7 @@ impl WordBuffer {
                         target_lang: layout::LANG_RU,
                         original_word: en,
                     });
-                } else {
+                } else if to_ru == Some(false) {
                     let new_word = apply_case_correction(&self.entries, &ua);
                     return Some(SwitchAction {
                         backspaces,
@@ -730,10 +758,46 @@ impl WordBuffer {
                         original_word: en,
                     });
                 }
+                // to_ru == None: both candidates blocked by preference → no switch
             }
         }
 
         None
+    }
+}
+
+/// Resolve the RU-vs-UA decision respecting `preferred_cyrillic`.
+///
+/// Returns:
+/// - `Some(true)`  → switch to RU
+/// - `Some(false)` → switch to UA
+/// - `None`        → skip (neither allowed by preference)
+///
+/// `ru_candidate`: whether a valid RU translation exists.
+/// `ua_lower`: the lowercase UA translation (used for marker detection).
+/// `auto_fn`: closure that returns the bigram/dict decision when `Auto`.
+fn resolve_cyrillic_preference(
+    pref: &crate::settings::PreferredCyrillic,
+    ru_candidate: bool,
+    ua_lower: &str,
+    auto_fn: impl FnOnce() -> bool,
+) -> Option<bool> {
+    match pref {
+        crate::settings::PreferredCyrillic::Ru => {
+            if ru_candidate { Some(true) } else { None }
+        }
+        crate::settings::PreferredCyrillic::Ua => {
+            Some(false)
+        }
+        crate::settings::PreferredCyrillic::Auto => {
+            // Variant B: without UA-specific letters, never switch to UA.
+            let ua_allowed = has_ua_markers(ua_lower);
+            if !ua_allowed {
+                if ru_candidate { Some(true) } else { None }
+            } else {
+                Some(auto_fn())
+            }
+        }
     }
 }
 

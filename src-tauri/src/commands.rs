@@ -46,6 +46,7 @@ pub fn save_settings(settings: Settings) -> Settings {
     s.sensitivity = settings.sensitivity;
     s.ignored_words = settings.ignored_words;
     s.use_selection_replace = settings.use_selection_replace;
+    s.preferred_cyrillic = settings.preferred_cyrillic;
 
     settings::save(&s);
     if lang_changed {

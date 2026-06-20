@@ -14,6 +14,7 @@ const undoHotkeyDisplay = document.getElementById('undo-hotkey-display');
 const autostartToggle = document.getElementById('autostart-toggle');
 const langSelect = document.getElementById('lang-select');
 const sensitivitySelect = document.getElementById('sensitivity-select');
+const preferredCyrillicSelect = document.getElementById('preferred-cyrillic-select');
 const openConfigBtn = document.getElementById('open-config-btn');
 
 // New settings elements
@@ -62,6 +63,10 @@ const translations = {
     sensitivityMedium: "Medium",
     sensitivityHigh: "High",
     selectionReplaceLabel: "Use Ctrl+Shift+Left for word deletion",
+    preferredCyrillicLabel: "Cyrillic:",
+    preferredCyrillicAuto: "Auto",
+    preferredCyrillicRu: "Russian",
+    preferredCyrillicUa: "Ukrainian",
     ignoredWordsTitle: "Ignored Words",
     ignoredWordsSubtitle: "words whitelisted by the Undo hotkey",
     clearIgnoredBtn: "Clear Whitelist",
@@ -101,6 +106,10 @@ const translations = {
     sensitivityMedium: "Средняя",
     sensitivityHigh: "Высокая",
     selectionReplaceLabel: "Выделять слово через Ctrl+Shift+Left при замене",
+    preferredCyrillicLabel: "Кириллица:",
+    preferredCyrillicAuto: "Авто",
+    preferredCyrillicRu: "Русский",
+    preferredCyrillicUa: "Украинский",
     ignoredWordsTitle: "Исключенные слова",
     ignoredWordsSubtitle: "слова, добавленные в белый список через Отмену",
     clearIgnoredBtn: "Очистить список",
@@ -140,6 +149,10 @@ const translations = {
     sensitivityMedium: "Середня",
     sensitivityHigh: "Висока",
     selectionReplaceLabel: "Виділяти слово через Ctrl+Shift+Left при заміні",
+    preferredCyrillicLabel: "Кирилиця:",
+    preferredCyrillicAuto: "Авто",
+    preferredCyrillicRu: "Російська",
+    preferredCyrillicUa: "Українська",
     ignoredWordsTitle: "Виключені слова",
     ignoredWordsSubtitle: "слова, додані до білого списку через Скасування",
     clearIgnoredBtn: "Очистити список",
@@ -499,7 +512,9 @@ async function loadAllData() {
     } else {
       sensitivitySelect.value = '1.0';
     }
-    
+
+    preferredCyrillicSelect.value = (settings && settings.preferred_cyrillic) || 'auto';
+
     const elevated = await invoke('is_elevated');
     if (elevated) {
       adminWarningBanner.style.display = 'none';
@@ -682,6 +697,18 @@ sensitivitySelect.addEventListener('change', async () => {
     if (saved) settings = saved;
   } catch (err) {
     console.error("Failed to save sensitivity settings:", err);
+  }
+});
+
+// Preferred Cyrillic Select Dropdown
+preferredCyrillicSelect.addEventListener('change', async () => {
+  if (!settings) return;
+  settings.preferred_cyrillic = preferredCyrillicSelect.value;
+  try {
+    const saved = await invoke('save_settings', { settings });
+    if (saved) settings = saved;
+  } catch (err) {
+    console.error("Failed to save preferred_cyrillic setting:", err);
   }
 });
 

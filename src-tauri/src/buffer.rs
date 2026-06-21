@@ -34,7 +34,7 @@ const COMMON_EN_SHORT: &[&str] = &[
     "she", "so", "sql", "src", "ssh", "ssl", "sys", "tcp", "the", "tls",
     "too", "try", "ts", "two", "txt", "udp", "ui", "up", "uri", "url",
     "use", "ux", "val", "vps", "was", "way", "we", "web", "who", "win",
-    "wp", "xml", "yes", "you", "zip"
+    "wp", "wsl", "xml", "yes", "you", "zip"
 ];
 
 include!(concat!(env!("OUT_DIR"), "/dictionaries_gen.rs"));
@@ -731,7 +731,12 @@ impl WordBuffer {
                 return None;
             }
 
-            if on_the_fly && ru_lower == ua_lower {
+            // For on-the-fly: skip when RU and UA produce the same word (can't
+            // disambiguate target Cyrillic script). Exception: sequences whose EN
+            // transliteration contains non-alphabetic characters cannot be valid
+            // English words, so the punct-dict shortcut below can still fire safely.
+            let en_has_punct = en_lower.chars().any(|c| !c.is_alphabetic());
+            if on_the_fly && ru_lower == ua_lower && !en_has_punct {
                 return None;
             }
 
@@ -739,7 +744,8 @@ impl WordBuffer {
             // non-alphabetic characters (e.g. ';' → 'ж' for "нужно"→"ye;yj").
             // Such sequences cannot be real English words, so bypass the bigram
             // threshold and rely on the common-word dictionary instead.
-            if !on_the_fly && len <= 6 && en_lower.chars().any(|c| !c.is_alphabetic()) {
+            // Works for both boundary and on-the-fly detection.
+            if len <= 6 && en_has_punct {
                 let ru_in_dict = ru_candidate && RU_COMMON_WORDS.binary_search(&ru_lower.as_str()).is_ok();
                 let ua_in_dict = ua_candidate && UA_COMMON_WORDS.binary_search(&ua_lower.as_str()).is_ok();
                 if ru_in_dict || ua_in_dict {
@@ -797,13 +803,13 @@ impl WordBuffer {
             let ru_threshold = base_threshold * if has_ru_markers(&ru_lower) {
                 if on_the_fly { 1.3 } else { 0.7 }
             } else {
-                if on_the_fly { 2.0 } else { 1.0 }
+                if on_the_fly { 2.5 } else { 1.0 }
             };
 
             let ua_threshold = base_threshold * if has_ua_markers(&ua_lower) {
                 if on_the_fly { 1.3 } else { 0.7 }
             } else {
-                if on_the_fly { 2.0 } else { 1.0 }
+                if on_the_fly { 2.5 } else { 1.0 }
             };
 
             let ru_switches = ru_diff > ru_threshold;
@@ -1246,6 +1252,31 @@ mod tests {
         assert_eq!(action.target_lang, LANG_RU);
         assert_eq!(action.new_word.to_lowercase(), "нужно");
         assert_eq!(action.backspaces, 5);
+    }
+
+    #[test]
+    fn nujno_with_punct_switches_on_the_fly() {
+        // "нужно" → "ye;yj": the punct dict shortcut must also fire on-the-fly
+        // (at 5 chars mid-word) because "ye;yj" contains ';' and cannot be a
+        // real English word, even though ru_lower == ua_lower == "нужно".
+        let mut buf = WordBuffer::new();
+        push_en_chars(&mut buf, "ye;yj");
+        let action = buf.detect_mismatch_on_the_fly(LANG_EN, 1.0)
+            .expect("punct dict shortcut should fire on-the-fly for нужно");
+        assert_eq!(action.target_lang, LANG_RU);
+        assert_eq!(action.new_word.to_lowercase(), "нужно");
+        assert_eq!(action.backspaces, 4);
+    }
+
+    #[test]
+    fn wsl_in_ru_layout_switches_to_en() {
+        let mut buf = WordBuffer::new();
+        // "wsl" in RU layout: VK_W→ц, VK_S→ы, VK_L→д → ru="цыд", not in dict
+        // while en="wsl" IS in COMMON_EN_SHORT → switch RU→EN.
+        push_en_word(&mut buf, "wsl");
+        let action = buf.detect_mismatch(LANG_RU).expect("wsl in RU layout should switch to EN");
+        assert_eq!(action.target_lang, LANG_EN);
+        assert_eq!(action.new_word, "wsl");
     }
 
     #[test]

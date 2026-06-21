@@ -467,11 +467,12 @@ unsafe fn process_key(
                 } else {
                     let shift = GetKeyState(VK_SHIFT.0 as i32) < 0;
                     let caps = GetKeyState(VK_CAPITAL.0 as i32) & 1 != 0;
+                    // Capture layout BEFORE push so entry_lang reflects the
+                    // original typing language, not a mid-word on-the-fly switch.
+                    let lang = foreground_lang();
+                    buf.set_entry_lang(lang);
                     buf.push(vk.0, shift ^ caps);
                     UNDO.with(|u| *u.borrow_mut() = None);
-
-                    // On-the-fly layout detection check
-                    let lang = foreground_lang();
                     if let Some(action) = buf.detect_mismatch_on_the_fly(lang, sensitivity) {
                         let snap = buf.detection_snapshot();
                         if let Some(ref s) = snap {
@@ -542,10 +543,15 @@ unsafe fn process_key(
                     }
                 }
                 if let Some(action) = result {
-                    save_undo(&action, None, lang);
+                    save_undo(&action, Some(vk), lang);
                     buf.clear();
-                    switcher::perform_switch(&action, None);
+                    PREV_WORD_BUF.with(|p| *p.borrow_mut() = None);
+                    switcher::perform_switch(&action, Some(vk));
+                    return true; // swallow boundary so it is re-injected cleanly
                 } else {
+                    if !buf.is_empty() {
+                        PREV_WORD_BUF.with(|p| *p.borrow_mut() = Some((buf.clone(), vk)));
+                    }
                     buf.clear();
                     UNDO.with(|u| *u.borrow_mut() = None);
                 }

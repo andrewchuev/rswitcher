@@ -108,11 +108,26 @@ pub fn switching_threshold(len: usize) -> f32 {
 pub struct WordBuffer {
     entries: Vec<Entry>,
     pub has_switched: bool,
+    /// Layout LANGID active when the first key of this word was pushed.
+    /// 0 = unset (buffer was never pushed to after last clear).
+    /// Stored so force_switch can use the ORIGINAL typing direction even after
+    /// on-the-fly detection has already changed foreground_lang() to a new layout.
+    entry_lang: u16,
 }
 
 impl WordBuffer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Record the active layout for the start of this word.
+    /// Must be called before the first `push` after a `clear` (i.e. when the
+    /// buffer is empty).  Subsequent calls while the buffer is non-empty are
+    /// ignored so that on-the-fly layout switches do not overwrite the value.
+    pub fn set_entry_lang(&mut self, lang: u16) {
+        if self.entries.is_empty() {
+            self.entry_lang = lang;
+        }
     }
 
     /// Push a translatable key.  `is_upper` = shift_held XOR caps_lock_on.
@@ -126,6 +141,7 @@ impl WordBuffer {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.has_switched = false;
+        self.entry_lang = 0;
     }
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
@@ -191,6 +207,11 @@ impl WordBuffer {
         if self.entries.is_empty() {
             return None;
         }
+        // Use the layout that was active when the user STARTED typing this word.
+        // After an on-the-fly mid-word switch, foreground_lang() already reports
+        // the target layout (e.g. EN), which would send force_switch in the wrong
+        // direction.  entry_lang is set before any mid-word switch happens.
+        let active_lang = if self.entry_lang != 0 { self.entry_lang } else { active_lang };
         let en: String = self
             .entries
             .iter()
@@ -1254,6 +1275,39 @@ mod tests {
         let action = buf.detect_mismatch(LANG_EN).expect("не in EN layout should switch to RU");
         assert_eq!(action.target_lang, LANG_RU);
         assert_eq!(action.new_word, "не");
+    }
+
+    // ── force_switch direction after on-the-fly ───────────────────────────────
+
+    #[test]
+    fn force_switch_uses_entry_lang_not_current_lang() {
+        // Simulates the scenario where on-the-fly detection already switched the
+        // foreground layout to EN (so foreground_lang() would return LANG_EN),
+        // but the user's original typing started in RU layout.
+        // force_switch must use entry_lang (RU), not the current lang (EN).
+        let mut buf = WordBuffer::new();
+        buf.set_entry_lang(LANG_RU); // set as if first key was typed in RU layout
+        // "пшерги" = VK_G/I/T/H/U/B → en="github"
+        push_en_word(&mut buf, "github");
+        buf.has_switched = true; // simulate on-the-fly already fired
+
+        // Even though we pass LANG_EN (current foreground lang after on-the-fly switch),
+        // force_switch must use entry_lang=LANG_RU and go Cyrillic→EN.
+        let action = buf.force_switch(LANG_EN).expect("should switch to EN using entry_lang");
+        assert_eq!(action.target_lang, LANG_EN);
+        assert_eq!(action.new_word, "github");
+    }
+
+    #[test]
+    fn force_switch_entry_lang_fallback_when_unset() {
+        // When entry_lang is 0 (unset, e.g. in tests that call push directly),
+        // force_switch falls back to the passed active_lang.
+        let mut buf = WordBuffer::new();
+        // entry_lang is 0 by default — no set_entry_lang call
+        push_en_word(&mut buf, "bulk"); // VK_B/U/L/K → en="bulk", ru="игдл"
+        let action = buf.force_switch(LANG_RU).expect("fallback to active_lang=LANG_RU");
+        assert_eq!(action.target_lang, LANG_EN);
+        assert_eq!(action.new_word, "bulk");
     }
 
     #[test]

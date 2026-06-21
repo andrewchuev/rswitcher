@@ -6,8 +6,8 @@ const COMMON_RU_SHORT: &[&str] = &[
     "да", "два", "для", "до", "дом", "его", "ее", "ей", "ему", "еще",
     "ещё", "её", "же", "за", "из", "изо", "или", "им", "ими", "имя",
     "их", "как", "кто", "ли", "мне", "мог", "мои", "моя", "мы", "на",
-    "нам", "нас", "ней", "нет", "них", "но", "об", "обо", "он", "она",
-    "они", "оно", "от", "ото", "под", "при", "про", "раз", "сам", "сих",
+    "нам", "нас", "не", "ней", "нет", "них", "но", "об", "обо", "он", "она",
+    "они", "оно", "от", "ото", "по", "под", "при", "про", "раз", "сам", "сих",
     "со", "так", "там", "те", "тем", "тех", "то", "той", "том", "тот",
     "три", "тут", "ты", "уж", "уже", "чем", "что", "это", "эту"
 ];
@@ -407,6 +407,29 @@ impl WordBuffer {
             return None;
         } else if layout::hkl_is_english(active_lang) && en_ok && EN_COMMON_WORDS.binary_search(&en_lower.as_str()).is_ok() {
             return None;
+        }
+
+        // ── 1b. Cross-layout EN dictionary check for Cyrillic-active layouts ──
+        // Mirrors the COMMON_EN_SHORT path in section 4 but for 4+ char words.
+        // If a known English word is typed in a Cyrillic layout, switch to EN.
+        if !on_the_fly && en_ok && EN_COMMON_WORDS.binary_search(&en_lower.as_str()).is_ok() {
+            if layout::hkl_is_russian(active_lang) && ru_ok && ru.chars().all(is_cyrillic_or_ua) {
+                let new_word = apply_case_correction(&self.entries, &en);
+                return Some(SwitchAction {
+                    backspaces,
+                    new_word,
+                    target_lang: layout::LANG_EN_US,
+                    original_word: ru.clone(),
+                });
+            } else if layout::hkl_is_ukrainian(active_lang) && ua_ok && ua.chars().all(is_cyrillic_or_ua) {
+                let new_word = apply_case_correction(&self.entries, &en);
+                return Some(SwitchAction {
+                    backspaces,
+                    new_word,
+                    target_lang: layout::LANG_EN_US,
+                    original_word: ua.clone(),
+                });
+            }
         }
 
         // ── 3. Check for single-letter words (1 char) ────────────────────────
@@ -1202,6 +1225,35 @@ mod tests {
         assert_eq!(action.target_lang, LANG_RU);
         assert_eq!(action.new_word.to_lowercase(), "нужно");
         assert_eq!(action.backspaces, 5);
+    }
+
+    #[test]
+    fn bulk_in_ru_layout_switches_to_en() {
+        let mut buf = WordBuffer::new();
+        push_en_word(&mut buf, "bulk"); // VK_B/U/L/K → RU: и/г/д/л = "игдл"
+        let action = buf.detect_mismatch(LANG_RU).expect("bulk in RU layout should switch to EN");
+        assert_eq!(action.target_lang, LANG_EN);
+        assert_eq!(action.new_word, "bulk");
+    }
+
+    #[test]
+    fn po_in_en_layout_switches_to_ru() {
+        let mut buf = WordBuffer::new();
+        // "по" typed from EN layout: VK_G (→ п) + VK_J (→ о) = en="gj", ru="по"
+        push_en_word(&mut buf, "gj");
+        let action = buf.detect_mismatch(LANG_EN).expect("по in EN layout should switch to RU");
+        assert_eq!(action.target_lang, LANG_RU);
+        assert_eq!(action.new_word, "по");
+    }
+
+    #[test]
+    fn ne_in_en_layout_switches_to_ru() {
+        let mut buf = WordBuffer::new();
+        // "не" typed from EN layout: VK_Y (→ н) + VK_T (→ е) = en="yt", ru="не"
+        push_en_word(&mut buf, "yt");
+        let action = buf.detect_mismatch(LANG_EN).expect("не in EN layout should switch to RU");
+        assert_eq!(action.target_lang, LANG_RU);
+        assert_eq!(action.new_word, "не");
     }
 
     #[test]

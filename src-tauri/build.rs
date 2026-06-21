@@ -66,7 +66,7 @@ fn generate_language_models() {
     // "jpeg" is a confirmed false-positive: score_en=-13.11 because j→p is
     // almost absent from general-text corpora, letting Cyrillic scores win.
     for w in &[
-        "docx", "jpeg", "jira", "jest", "json", "jwt",
+        "bulk", "docx", "jpeg", "jira", "jest", "json", "jwt",
         "pptx", "xlsx",
     ] {
         if !en_words.contains(&w.to_string()) {

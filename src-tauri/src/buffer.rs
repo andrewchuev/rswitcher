@@ -337,6 +337,17 @@ impl WordBuffer {
             }
         }
 
+        // Skip words whose keys are all the same (e.g. "jjjjj" → "ооооо").
+        // Repeated-key runs have near-identical bigram scores in every language
+        // and produce false switches on key holds or rapid tapping.
+        // Only meaningful for len >= 2; single-char words are handled separately below.
+        if len >= 2 {
+            let first_vk = self.entries[0].vk;
+            if self.entries.iter().all(|e| e.vk == first_vk) {
+                return None;
+            }
+        }
+
         // Translate VK codes through EN, RU, and UA.
         let en: String = self
             .entries
@@ -1230,6 +1241,24 @@ mod tests {
         let action = buf.detect_mismatch(LANG_UA).expect("should cross-switch UA -> RU");
         assert_eq!(action.target_lang, LANG_RU);
         assert_eq!(action.new_word, "это");
+    }
+
+    #[test]
+    fn repeated_key_does_not_switch() {
+        // "jjjjj" in EN layout → "ооооо" in RU. Repeating a single key must
+        // never trigger a switch regardless of how many times it is pressed.
+        let mut buf = WordBuffer::new();
+        for _ in 0..5 {
+            buf.push(0x4A, false); // VK_J → 'j' in EN, 'о' in RU
+        }
+        assert!(buf.detect_mismatch(LANG_EN).is_none(), "repeated key must not switch");
+        buf.clear();
+
+        // Same check for Cyrillic layout direction
+        for _ in 0..5 {
+            buf.push(0x4A, false);
+        }
+        assert!(buf.detect_mismatch(LANG_RU).is_none(), "repeated key in RU must not switch");
     }
 
     #[test]

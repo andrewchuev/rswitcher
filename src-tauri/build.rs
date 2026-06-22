@@ -98,6 +98,11 @@ fn generate_language_models() {
         "хочешь", "понимаешь", "слышишь",
         // Russian preposition+case forms
         "между", "через", "около", "перед",
+        // Words where VK→EN contains common EN bigrams that boost score_en
+        // falsely (е+щ = keys T+O → EN "to"; е+щ+е = "tot", etc.).
+        // Without dictionary protection these get switched to EN despite being
+        // unambiguously Russian words.
+        "вещи", "вещь", "вещей", "вещам", "вещах", "вещами",
     ] {
         if !ru_words.contains(&w.to_string()) {
             ru_words.push(w.to_string());

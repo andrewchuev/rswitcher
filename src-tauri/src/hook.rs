@@ -37,6 +37,48 @@ thread_local! {
 
     static SUCCESS_COUNTS: RefCell<std::collections::HashMap<String, u32>> =
         RefCell::new(std::collections::HashMap::new());
+
+    /// Ring buffer of the last 4 "confirmed" layout LANGID values.
+    /// Updated after each boundary-word decision: the layout the word ended up in
+    /// (target_lang on switch, active_lang when no switch).
+    static CONTEXT_LANGS: RefCell<std::collections::VecDeque<u16>> =
+        RefCell::new(std::collections::VecDeque::new());
+}
+
+/// Returns the dominant layout if ≥2 of the last 3 recorded words share it.
+fn context_dominant_lang() -> Option<u16> {
+    CONTEXT_LANGS.with(|c| {
+        let ctx = c.borrow();
+        if ctx.len() < 2 {
+            return None;
+        }
+        let last3: Vec<u16> = ctx.iter().rev().take(3).copied().collect();
+        let first = last3[0];
+        if last3.iter().filter(|&&l| l == first).count() >= 2 {
+            Some(first)
+        } else {
+            None
+        }
+    })
+}
+
+fn record_context_lang(lang: u16) {
+    CONTEXT_LANGS.with(|c| {
+        let mut ctx = c.borrow_mut();
+        if ctx.len() >= 4 {
+            ctx.pop_front();
+        }
+        ctx.push_back(lang);
+    });
+}
+
+#[derive(Clone, Copy, Debug)]
+struct HookHotkey {
+    vk: VIRTUAL_KEY,
+    win: bool,
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
 }
 
 struct UndoState {
@@ -109,9 +151,10 @@ unsafe fn hook_proc_inner(
             }
         });
         UNDO.with(|u| *u.borrow_mut() = None);
+        CONTEXT_LANGS.with(|c| c.borrow_mut().clear());
     }
 
-    let (enabled, excluded, excluded_name, hotkey, undo_hotkey, sensitivity) = SETTINGS
+    let (enabled, excluded, excluded_name, hotkey, undo_hotkey, sensitivity, config) = SETTINGS
         .get()
         .and_then(|s| s.try_read().ok())
         .map(|s| {
@@ -122,11 +165,29 @@ unsafe fn hook_proc_inner(
                     .filter(|name| s.exceptions.contains(name))
             };
             let excluded = excluded_name.is_some();
-            let hotkey = s.hotkey_enabled.then_some((VIRTUAL_KEY(s.hotkey_vk), s.hotkey_win));
-            let undo_hotkey = s.undo_hotkey_enabled.then_some((VIRTUAL_KEY(s.undo_hotkey_vk), s.undo_hotkey_win));
-            (s.enabled, excluded, excluded_name, hotkey, undo_hotkey, s.sensitivity)
+            let hotkey = s.hotkey_enabled.then_some(HookHotkey {
+                vk: VIRTUAL_KEY(s.hotkey_vk),
+                win: s.hotkey_win,
+                ctrl: s.hotkey_ctrl,
+                shift: s.hotkey_shift,
+                alt: s.hotkey_alt,
+            });
+            let undo_hotkey = s.undo_hotkey_enabled.then_some(HookHotkey {
+                vk: VIRTUAL_KEY(s.undo_hotkey_vk),
+                win: s.undo_hotkey_win,
+                ctrl: s.undo_hotkey_ctrl,
+                shift: s.undo_hotkey_shift,
+                alt: s.undo_hotkey_alt,
+            });
+            let config = buffer::DetectionConfig {
+                ignored_words: s.ignored_words.clone(),
+                word_corrections: s.word_corrections.clone(),
+                preferred_cyrillic: s.preferred_cyrillic.clone(),
+                context_lang: context_dominant_lang(),
+            };
+            (s.enabled, excluded, excluded_name, hotkey, undo_hotkey, s.sensitivity, config)
         })
-        .unwrap_or((false, false, None, None, None, 1.0));
+        .unwrap_or_else(|| (false, false, None, None, None, 1.0, buffer::DetectionConfig::default()));
 
     if !enabled || excluded {
         if excluded {
@@ -146,7 +207,7 @@ unsafe fn hook_proc_inner(
     let vk = VIRTUAL_KEY(kb.vkCode as u16);
     let swallow = WORD_BUF.with(|cell| {
         let mut buf = cell.borrow_mut();
-        process_key(vk, &mut buf, hotkey, undo_hotkey, sensitivity)
+        process_key(vk, &mut buf, hotkey, undo_hotkey, sensitivity, &config)
     });
 
     if swallow {
@@ -185,52 +246,103 @@ unsafe fn key_is_held(configured: u16) -> bool {
 }
 
 fn vk_matches(actual: u16, configured: u16) -> bool {
+    if actual == configured {
+        return true;
+    }
     match configured {
         0x10 => matches!(actual, 0xA0 | 0xA1), // VK_SHIFT
         0x11 => matches!(actual, 0xA2 | 0xA3), // VK_CONTROL
         0x12 => matches!(actual, 0xA4 | 0xA5), // VK_MENU
-        _ => actual == configured,
+        _ => false,
+    }
+}
+
+fn hotkey_matches(
+    vk: VIRTUAL_KEY,
+    hk: &HookHotkey,
+    win_pressed: bool,
+    ctrl_pressed: bool,
+    shift_pressed: bool,
+    alt_pressed: bool,
+    main_held: bool,
+) -> bool {
+    let vk_is_main = vk_matches(vk.0, hk.vk.0);
+    let vk_is_win = vk.0 == 0x5B || vk.0 == 0x5C;
+    let vk_is_ctrl = vk.0 == 0x11 || vk.0 == 0xA2 || vk.0 == 0xA3;
+    let vk_is_shift = vk.0 == 0x10 || vk.0 == 0xA0 || vk.0 == 0xA1;
+    let vk_is_alt = vk.0 == 0x12 || vk.0 == 0xA4 || vk.0 == 0xA5;
+
+    let vk_matches_configured = vk_is_main 
+        || (vk_is_win && hk.win)
+        || (vk_is_ctrl && hk.ctrl)
+        || (vk_is_shift && hk.shift)
+        || (vk_is_alt && hk.alt);
+
+    if !vk_matches_configured {
+        return false;
+    }
+
+    let main_pressed = vk_is_main || main_held;
+
+    let expected_win = hk.win || vk_matches(hk.vk.0, 0x5B) || vk_matches(hk.vk.0, 0x5C);
+    let expected_ctrl = hk.ctrl || vk_matches(hk.vk.0, 0x11);
+    let expected_shift = hk.shift || vk_matches(hk.vk.0, 0x10);
+    let expected_alt = hk.alt || vk_matches(hk.vk.0, 0x12);
+
+    main_pressed
+        && win_pressed == expected_win
+        && ctrl_pressed == expected_ctrl
+        && shift_pressed == expected_shift
+        && alt_pressed == expected_alt
+}
+
+fn switch_direction_str(from: u16, to: u16) -> &'static str {
+    match (layout::hkl_is_english(from), layout::hkl_is_russian(from), to) {
+        (_, _, t) if t == layout::LANG_EN_US && layout::hkl_is_russian(from) => "RU→EN",
+        (_, _, t) if t == layout::LANG_EN_US => "UA→EN",
+        (_, _, t) if t == layout::LANG_RU => "EN→RU",
+        _ => "EN→UA",
     }
 }
 
 unsafe fn process_key(
     vk: VIRTUAL_KEY,
     buf: &mut buffer::WordBuffer,
-    hotkey: Option<(VIRTUAL_KEY, bool)>,
-    undo_hotkey: Option<(VIRTUAL_KEY, bool)>,
+    hotkey: Option<HookHotkey>,
+    undo_hotkey: Option<HookHotkey>,
     sensitivity: f32,
+    config: &buffer::DetectionConfig,
 ) -> bool {
-    let win_held = GetAsyncKeyState(VK_LWIN.0 as i32) < 0
+    let _win_held = GetAsyncKeyState(VK_LWIN.0 as i32) < 0
         || GetAsyncKeyState(VK_RWIN.0 as i32) < 0;
 
     log_debug!(
         "[KEY] vk={:#04x} win={} buf={}",
-        vk.0, win_held as u8, buf.len()
+        vk.0, _win_held as u8, buf.len()
     );
 
     let is_modifier = matches!(vk.0,
         0xA0 | 0xA1 | 0xA2 | 0xA3 | 0xA4 | 0xA5 | 0x5B | 0x5C | 0x10 | 0x11 | 0x12
     );
-    let is_hotkey_vk = if let Some((hk_vk, _)) = hotkey { vk.0 == hk_vk.0 } else { false };
-    let is_undo_vk = if let Some((uh_vk, _)) = undo_hotkey { vk.0 == uh_vk.0 } else { false };
+    let is_hotkey_vk = if let Some(ref hk) = hotkey { vk.0 == hk.vk.0 } else { false };
+    let is_undo_vk = if let Some(ref uh) = undo_hotkey { vk.0 == uh.vk.0 } else { false };
 
     if !is_modifier && !is_hotkey_vk && !is_undo_vk {
         PREV_WORD_BUF.with(|p| *p.borrow_mut() = None);
     }
 
-    let hotkey_fires = |vk: VIRTUAL_KEY, hk_vk: VIRTUAL_KEY, hk_win: bool| -> bool {
-        let is_win_vk = vk.0 == VK_LWIN.0 || vk.0 == VK_RWIN.0;
-        if hk_win {
-            let order_a = vk_matches(vk.0, hk_vk.0) && win_held;
-            let order_b = is_win_vk && key_is_held(hk_vk.0);
-            order_a || order_b
-        } else {
-            vk_matches(vk.0, hk_vk.0) && !win_held
-        }
+    let hotkey_fires = |vk: VIRTUAL_KEY, hk: &HookHotkey| -> bool {
+        let win_pressed = unsafe { GetAsyncKeyState(0x5B) < 0 || GetAsyncKeyState(0x5C) < 0 };
+        let ctrl_pressed = unsafe { GetAsyncKeyState(0x11) < 0 || GetAsyncKeyState(0xA2) < 0 || GetAsyncKeyState(0xA3) < 0 };
+        let shift_pressed = unsafe { GetAsyncKeyState(0x10) < 0 || GetAsyncKeyState(0xA0) < 0 || GetAsyncKeyState(0xA1) < 0 };
+        let alt_pressed = unsafe { GetAsyncKeyState(0x12) < 0 || GetAsyncKeyState(0xA4) < 0 || GetAsyncKeyState(0xA5) < 0 };
+        
+        let main_held = unsafe { key_is_held(hk.vk.0) };
+        hotkey_matches(vk, hk, win_pressed, ctrl_pressed, shift_pressed, alt_pressed, main_held)
     };
 
-    if let Some((uh_vk, uh_win)) = undo_hotkey {
-        if hotkey_fires(vk, uh_vk, uh_win) {
+    if let Some(ref uh) = undo_hotkey {
+        if hotkey_fires(vk, uh) {
             let state = UNDO.with(|u| u.borrow_mut().take());
             if let Some(s) = state {
                 log_info!(
@@ -243,8 +355,7 @@ unsafe fn process_key(
                 if !word_to_ignore.is_empty() {
                     if let Some(settings_arc) = SETTINGS.get() {
                         if let Ok(mut settings) = settings_arc.write() {
-                            if !settings.ignored_words.contains(&word_to_ignore) {
-                                settings.ignored_words.push(word_to_ignore.clone());
+                            if settings.ignored_words.insert(word_to_ignore.clone()) {
                                 crate::settings::save_async(&settings);
                                 log_info!("[UNDO] Added '{}' to ignored_words whitelist", word_to_ignore);
                             }
@@ -261,22 +372,23 @@ unsafe fn process_key(
                 switcher::perform_switch(&undo_action, s.boundary_vk);
             }
             buf.clear();
-            if uh_win {
+            if uh.win {
                 switcher::suppress_start_menu();
             }
             return true;
         }
     }
 
-    if let Some((hk_vk, hk_win)) = hotkey {
-        if hotkey_fires(vk, hk_vk, hk_win) {
+    if let Some(ref hk) = hotkey {
+        if hotkey_fires(vk, hk) {
             let lang = foreground_lang();
             let snap = buf.detection_snapshot();
-            if let Some(action) = buf.force_switch(lang) {
+            if let Some(action) = buf.force_switch_with_config(lang, config) {
                 if let Some(ref s) = snap {
                     log_info!(
-                        "[FORCE] lang={:#06x} en={:?} ru={:?} ua={:?} score_en={:.2} score_ru={:.2} score_ua={:.2} → target={:#06x}",
+                        "[FORCE] lang={:#06x} en={:?} ru={:?} ua={:?} score_en={:.2} score_ru={:.2} score_ua={:.2} → {} ({:#06x})",
                         lang, s.en_word, s.ru_word, s.ua_word, s.score_en, s.score_ru, s.score_ua,
+                        switch_direction_str(lang, action.target_lang),
                         action.target_lang
                     );
                     record_force_correction(&s.en_word, action.target_lang);
@@ -290,11 +402,12 @@ unsafe fn process_key(
                 let prev = PREV_WORD_BUF.with(|p| p.borrow_mut().take());
                 if let Some((prev_buf, boundary_vk)) = prev {
                     let prev_snap = prev_buf.detection_snapshot();
-                    if let Some(action) = prev_buf.force_switch(lang) {
+                    if let Some(action) = prev_buf.force_switch_with_config(lang, config) {
                         if let Some(ref s) = prev_snap {
                             log_info!(
-                                "[FORCE-PREV] lang={:#06x} en={:?} ru={:?} ua={:?} score_en={:.2} score_ru={:.2} score_ua={:.2} → target={:#06x} boundary={:#04x}",
+                                "[FORCE-PREV] lang={:#06x} en={:?} ru={:?} ua={:?} score_en={:.2} score_ru={:.2} score_ua={:.2} → {} ({:#06x}) boundary={:#04x}",
                                 lang, s.en_word, s.ru_word, s.ua_word, s.score_en, s.score_ru, s.score_ua,
+                                switch_direction_str(lang, action.target_lang),
                                 action.target_lang,
                                 boundary_vk.0
                             );
@@ -310,7 +423,7 @@ unsafe fn process_key(
                     buf.clear();
                 }
             }
-            if hk_win {
+            if hk.win {
                 switcher::suppress_start_menu();
             }
             UNDO.with(|u| u.borrow_mut().take());
@@ -326,23 +439,15 @@ unsafe fn process_key(
 
         VK_SPACE | VK_RETURN | VK_TAB => {
             let lang = foreground_lang();
-            let snap = buf.detection_snapshot();
-            let result = buf.detect_mismatch_with_sensitivity(lang, sensitivity);
+            let (result, snap) = buf.detect_with_snapshot(lang, sensitivity, config);
 
             if let Some(ref s) = snap {
                 match &result {
                     Some(action) => {
-                        let switch_direction = if action.target_lang == layout::LANG_EN_US {
-                            if layout::hkl_is_russian(lang) { "RU→EN" } else { "UA→EN" }
-                        } else if action.target_lang == layout::LANG_RU {
-                            "EN→RU"
-                        } else {
-                            "EN→UA"
-                        };
                         log_info!(
                             "[DETECT] lang={:#06x} en={:?} ru={:?} ua={:?} score_en={:.2} score_ru={:.2} score_ua={:.2} → SWITCH_{} boundary={:#04x}",
                             lang, s.en_word, s.ru_word, s.ua_word, s.score_en, s.score_ru, s.score_ua,
-                            switch_direction,
+                            switch_direction_str(lang, action.target_lang),
                             vk.0
                         );
                     }
@@ -364,6 +469,7 @@ unsafe fn process_key(
             }
 
             if let Some(action) = result {
+                record_context_lang(action.target_lang);
                 save_undo(&action, Some(vk), lang);
                 buf.clear();
                 PREV_WORD_BUF.with(|p| *p.borrow_mut() = None);
@@ -371,6 +477,7 @@ unsafe fn process_key(
                 true
             } else {
                 if !buf.is_empty() {
+                    record_context_lang(lang);
                     PREV_WORD_BUF.with(|p| *p.borrow_mut() = Some((buf.clone(), vk)));
 
                     // Adaptive dictionary check:
@@ -428,8 +535,7 @@ unsafe fn process_key(
                                     if new_count >= 3 {
                                         if let Some(settings_arc) = SETTINGS.get() {
                                             if let Ok(mut settings) = settings_arc.write() {
-                                                if !settings.ignored_words.contains(&word) {
-                                                    settings.ignored_words.push(word.clone());
+                                                if settings.ignored_words.insert(word.clone()) {
                                                     log_info!("[ADAPTIVE] Added '{}' to ignored_words whitelist (typed 3× total)", word);
                                                 }
                                                 settings.adaptive_counts.remove(&word);
@@ -473,20 +579,13 @@ unsafe fn process_key(
                     buf.set_entry_lang(lang);
                     buf.push(vk.0, shift ^ caps);
                     UNDO.with(|u| *u.borrow_mut() = None);
-                    if let Some(action) = buf.detect_mismatch_on_the_fly(lang, sensitivity) {
-                        let snap = buf.detection_snapshot();
-                        if let Some(ref s) = snap {
-                            let switch_direction = if action.target_lang == layout::LANG_EN_US {
-                                if layout::hkl_is_russian(lang) { "RU→EN" } else { "UA→EN" }
-                            } else if action.target_lang == layout::LANG_RU {
-                                "EN→RU"
-                            } else {
-                                "EN→UA"
-                            };
+                    let (fly_result, fly_snap) = buf.detect_on_the_fly_with_snapshot(lang, sensitivity, config);
+                    if let Some(action) = fly_result {
+                        if let Some(ref s) = fly_snap {
                             log_info!(
                                 "[FLY-DETECT] lang={:#06x} en={:?} ru={:?} ua={:?} score_en={:.2} score_ru={:.2} score_ua={:.2} → SWITCH_{} (on-the-fly)",
                                 lang, s.en_word, s.ru_word, s.ua_word, s.score_en, s.score_ru, s.score_ua,
-                                switch_direction
+                                switch_direction_str(lang, action.target_lang)
                             );
                         }
                         save_undo(&action, None, lang);
@@ -507,22 +606,14 @@ unsafe fn process_key(
                 UNDO.with(|u| *u.borrow_mut() = None);
             } else {
                 let lang = foreground_lang();
-                let snap = buf.detection_snapshot();
-                let result = buf.detect_mismatch_with_sensitivity(lang, sensitivity);
+                let (result, snap) = buf.detect_with_snapshot(lang, sensitivity, config);
                 if let Some(ref s) = snap {
                     match &result {
                         Some(action) => {
-                            let switch_direction = if action.target_lang == layout::LANG_EN_US {
-                                if layout::hkl_is_russian(lang) { "RU→EN" } else { "UA→EN" }
-                            } else if action.target_lang == layout::LANG_RU {
-                                "EN→RU"
-                            } else {
-                                "EN→UA"
-                            };
                             log_info!(
                                 "[DETECT] lang={:#06x} en={:?} ru={:?} ua={:?} score_en={:.2} score_ru={:.2} score_ua={:.2} → SWITCH_{} boundary=vk{:#04x}",
                                 lang, s.en_word, s.ru_word, s.ua_word, s.score_en, s.score_ru, s.score_ua,
-                                switch_direction,
+                                switch_direction_str(lang, action.target_lang),
                                 vk.0
                             );
                         }
@@ -543,6 +634,7 @@ unsafe fn process_key(
                     }
                 }
                 if let Some(action) = result {
+                    record_context_lang(action.target_lang);
                     save_undo(&action, Some(vk), lang);
                     buf.clear();
                     PREV_WORD_BUF.with(|p| *p.borrow_mut() = None);
@@ -550,6 +642,7 @@ unsafe fn process_key(
                     return true; // swallow boundary so it is re-injected cleanly
                 } else {
                     if !buf.is_empty() {
+                        record_context_lang(lang);
                         PREV_WORD_BUF.with(|p| *p.borrow_mut() = Some((buf.clone(), vk)));
                     }
                     buf.clear();
@@ -692,3 +785,109 @@ pub fn start_hook_thread() -> std::thread::JoinHandle<()> {
         })
         .expect("failed to spawn hook thread")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY;
+
+    #[test]
+    fn test_hotkey_matches_standard() {
+        let hk = HookHotkey {
+            vk: VIRTUAL_KEY(0x20), // VK_SPACE
+            win: false,
+            ctrl: true,
+            shift: false,
+            alt: true,
+        };
+
+        // Scenario A: Exact match (Ctrl + Alt + Space)
+        assert!(hotkey_matches(
+            VIRTUAL_KEY(0x20),
+            &hk,
+            false, // win
+            true,  // ctrl
+            false, // shift
+            true,  // alt
+            false  // main_held
+        ));
+
+        // Scenario B: Missing modifier Ctrl
+        assert!(!hotkey_matches(
+            VIRTUAL_KEY(0x20),
+            &hk,
+            false,
+            false, // ctrl is missing
+            false,
+            true,
+            false
+        ));
+
+        // Scenario C: Extra modifier Shift
+        assert!(!hotkey_matches(
+            VIRTUAL_KEY(0x20),
+            &hk,
+            false,
+            true,
+            true, // shift is extra
+            true,
+            false
+        ));
+    }
+
+    #[test]
+    fn test_hotkey_matches_modifier_only() {
+        let hk = HookHotkey {
+            vk: VIRTUAL_KEY(0x10), // Shift
+            win: true,
+            ctrl: false,
+            shift: false,
+            alt: false,
+        };
+
+        // Scenario A: Exact match (Win + Shift). Key event is Shift.
+        assert!(hotkey_matches(
+            VIRTUAL_KEY(0x10),
+            &hk,
+            true,  // win
+            false,
+            true,  // shift (since triggering key is Shift)
+            false,
+            false
+        ));
+
+        // Scenario B: Exact match (Win + Left Shift). Key event is Left Shift.
+        assert!(hotkey_matches(
+            VIRTUAL_KEY(0xA0), // VK_LSHIFT
+            &hk,
+            true,
+            false,
+            true,  // shift (since triggering key is Left Shift)
+            false,
+            false
+        ));
+
+        // Scenario C: Win is not pressed
+        assert!(!hotkey_matches(
+            VIRTUAL_KEY(0x10),
+            &hk,
+            false, // no win
+            false,
+            true,  // shift (since triggering key is Shift)
+            false,
+            false
+        ));
+
+        // Scenario D: Extra modifier Ctrl
+        assert!(!hotkey_matches(
+            VIRTUAL_KEY(0x10),
+            &hk,
+            true,
+            true,  // ctrl is extra
+            true,  // shift (since triggering key is Shift)
+            false,
+            false
+        ));
+    }
+}
+

@@ -78,12 +78,14 @@ pub(crate) fn score_mapped(
     n: usize,
     char_map: impl Fn(char) -> Option<usize>,
 ) -> f32 {
-    let chars: Vec<Option<usize>> = word
-        .chars()
-        .map(|c| {
-            c.to_lowercase().next().and_then(|lc| char_map(lc))
-        })
-        .collect();
+    let mut buf = [None::<usize>; 64];
+    let mut len = 0usize;
+    for c in word.chars() {
+        if len >= 64 { break; }
+        buf[len] = c.to_lowercase().next().and_then(|lc| char_map(lc));
+        len += 1;
+    }
+    let chars = &buf[..len];
 
     let valid_count = chars.iter().filter(|c| c.is_some()).count();
     if valid_count < 2 {
@@ -93,62 +95,58 @@ pub(crate) fn score_mapped(
     let penalty_ln = -10.0f32;
     let mut sum = 0.0f32;
 
-    // First transition: Bigram
     match (chars[0], chars[1]) {
         (Some(c1), Some(c2)) => sum += bi_table[c1 * n + c2].ln(),
         _ => sum += penalty_ln,
     }
 
-    // Subsequent transitions: Trigram
-    for i in 2..chars.len() {
+    for i in 2..len {
         match (chars[i - 2], chars[i - 1], chars[i]) {
             (Some(c1), Some(c2), Some(c3)) => sum += tri_table[c1 * n * n + c2 * n + c3].ln(),
             _ => sum += penalty_ln,
         }
     }
 
-    sum / (chars.len() - 1) as f32
+    sum / (len - 1) as f32
 }
 
 pub(crate) fn score(word: &str, bi_table: &[f32], tri_table: &[f32], base: u32, n: u32) -> f32 {
-    let chars: Vec<Option<u32>> = word
-        .chars()
-        .map(|c| {
-            c.to_lowercase().next().and_then(|lc| {
-                // Normalise ё→е so it falls in the RU table range.
-                let lc = if lc == 'ё' { 'е' } else { lc };
-                let d = (lc as u32).checked_sub(base)?;
-                if d < n { Some(d) } else { None }
-            })
-        })
-        .collect();
+    let mut buf = [None::<u32>; 64];
+    let mut len = 0usize;
+    for c in word.chars() {
+        if len >= 64 { break; }
+        buf[len] = c.to_lowercase().next().and_then(|lc| {
+            let lc = if lc == 'ё' { 'е' } else { lc };
+            let d = (lc as u32).checked_sub(base)?;
+            if d < n { Some(d) } else { None }
+        });
+        len += 1;
+    }
+    let chars = &buf[..len];
 
     let valid_count = chars.iter().filter(|c| c.is_some()).count();
     if valid_count < 2 {
         return f32::NEG_INFINITY;
     }
 
-    let penalty_ln = -10.0f32; // Log-probability penalty for invalid transitions
+    let penalty_ln = -10.0f32;
     let mut sum = 0.0f32;
 
-    // First transition: Bigram
     match (chars[0], chars[1]) {
         (Some(c1), Some(c2)) => sum += bi_table[(c1 * n + c2) as usize].ln(),
         _ => sum += penalty_ln,
     }
 
-    // Subsequent transitions: Trigram
-    for i in 2..chars.len() {
+    for i in 2..len {
         match (chars[i - 2], chars[i - 1], chars[i]) {
             (Some(c1), Some(c2), Some(c3)) => {
-                let idx = (c1 * n * n + c2 * n + c3) as usize;
-                sum += tri_table[idx].ln();
+                sum += tri_table[(c1 * n * n + c2 * n + c3) as usize].ln();
             }
             _ => sum += penalty_ln,
         }
     }
 
-    sum / (chars.len() - 1) as f32
+    sum / (len - 1) as f32
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

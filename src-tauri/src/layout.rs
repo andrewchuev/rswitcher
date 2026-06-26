@@ -1,4 +1,5 @@
 /// Mapping: (EN lowercase char, RU lowercase char) for the standard Windows RU layout.
+#[cfg(test)]
 static MAP: &[(char, char)] = &[
     ('q', 'й'), ('w', 'ц'), ('e', 'у'), ('r', 'к'), ('t', 'е'),
     ('y', 'н'), ('u', 'г'), ('i', 'ш'), ('o', 'щ'), ('p', 'з'),
@@ -10,6 +11,7 @@ static MAP: &[(char, char)] = &[
 ];
 
 /// Mapping: (EN lowercase char, UA lowercase char) for the standard Windows UA layout.
+#[cfg(test)]
 static UA_MAP: &[(char, char)] = &[
     ('q', 'й'), ('w', 'ц'), ('e', 'у'), ('r', 'к'), ('t', 'е'),
     ('y', 'н'), ('u', 'г'), ('i', 'ш'), ('o', 'щ'), ('p', 'з'),
@@ -22,8 +24,17 @@ static UA_MAP: &[(char, char)] = &[
 
 pub fn en_to_ru(ch: char) -> Option<char> {
     let lower = ch.to_lowercase().next()?;
-    let ru = MAP.iter().find(|&&(en, _)| en == lower)?.1;
-    if ch.is_uppercase() { ru.to_uppercase().next() } else { Some(ru) }
+    let ru_base = match lower {
+        'q' => 'й', 'w' => 'ц', 'e' => 'у', 'r' => 'к', 't' => 'е',
+        'y' => 'н', 'u' => 'г', 'i' => 'ш', 'o' => 'щ', 'p' => 'з',
+        '[' => 'х', ']' => 'ъ',
+        'a' => 'ф', 's' => 'ы', 'd' => 'в', 'f' => 'а', 'g' => 'п',
+        'h' => 'р', 'j' => 'о', 'k' => 'л', 'l' => 'д', ';' => 'ж', '\'' => 'э',
+        'z' => 'я', 'x' => 'ч', 'c' => 'с', 'v' => 'м', 'b' => 'и',
+        'n' => 'т', 'm' => 'ь', ',' => 'б', '.' => 'ю',
+        _ => return None,
+    };
+    if ch.is_uppercase() { ru_base.to_uppercase().next() } else { Some(ru_base) }
 }
 
 #[cfg(test)]
@@ -35,8 +46,17 @@ pub fn ru_to_en(ch: char) -> Option<char> {
 
 pub fn en_to_ua(ch: char) -> Option<char> {
     let lower = ch.to_lowercase().next()?;
-    let ua = UA_MAP.iter().find(|&&(en, _)| en == lower)?.1;
-    if ch.is_uppercase() { ua.to_uppercase().next() } else { Some(ua) }
+    let ua_base = match lower {
+        'q' => 'й', 'w' => 'ц', 'e' => 'у', 'r' => 'к', 't' => 'е',
+        'y' => 'н', 'u' => 'г', 'i' => 'ш', 'o' => 'щ', 'p' => 'з',
+        '[' => 'х', ']' => 'ї',
+        'a' => 'ф', 's' => 'і', 'd' => 'в', 'f' => 'а', 'g' => 'п',
+        'h' => 'р', 'j' => 'о', 'k' => 'л', 'l' => 'д', ';' => 'ж', '\'' => 'є',
+        'z' => 'я', 'x' => 'ч', 'c' => 'с', 'v' => 'м', 'b' => 'и',
+        'n' => 'т', 'm' => 'ь', ',' => 'б', '.' => 'ю', '\\' => 'ґ',
+        _ => return None,
+    };
+    if ch.is_uppercase() { ua_base.to_uppercase().next() } else { Some(ua_base) }
 }
 
 #[cfg(test)]

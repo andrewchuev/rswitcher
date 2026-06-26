@@ -1,14 +1,14 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::{bigrams, layout};
 
 const COMMON_RU_SHORT: &[&str] = &[
     "без", "был", "быт", "вас", "век", "все", "всю", "всё", "вы", "где",
     "да", "два", "для", "до", "дом", "его", "ее", "ей", "ему", "еще",
     "ещё", "её", "же", "за", "из", "изо", "или", "им", "ими", "имя",
-    "их", "как", "кто", "ли", "мне", "мог", "мои", "моя", "мы", "на",
+    "их", "как", "кто", "ли", "мин", "мне", "мог", "мои", "моя", "мы", "на",
     "нам", "нас", "не", "ней", "нет", "них", "но", "об", "обо", "он", "она",
     "они", "оно", "от", "ото", "по", "под", "при", "про", "раз", "сам", "сих",
-    "со", "так", "там", "те", "тем", "тех", "то", "той", "том", "тот",
+    "со", "так", "там", "те", "тем", "тех", "тип", "то", "той", "том", "тот",
     "три", "тут", "ты", "уж", "уже", "чем", "что", "это", "эту"
 ];
 
@@ -22,22 +22,36 @@ const COMMON_UA_SHORT: &[&str] = &[
 
 const COMMON_EN_SHORT: &[&str] = &[
     "add", "am", "an", "and", "any", "api", "app", "are", "as", "at",
-    "bad", "bat", "be", "big", "bin", "but", "by", "can", "cd", "cfg",
-    "cli", "cmd", "css", "csv", "day", "db", "dev", "did", "dir", "dns",
-    "do", "doc", "dom", "env", "err", "few", "for", "ftp", "get", "git",
-    "go", "had", "has", "he", "her", "him", "his", "how", "hub", "id",
-    "if", "in", "io", "ip", "is", "it", "its", "js", "key", "let",
-    "lib", "log", "low", "ls", "mac", "mad", "map", "may", "md", "me",
-    "my", "net", "new", "no", "not", "now", "npm", "of", "off", "old",
-    "on", "one", "or", "org", "os", "our", "out", "own", "pdf", "pkg",
-    "png", "pr", "py", "red", "rs", "run", "sad", "say", "see", "sh",
-    "she", "so", "sql", "src", "ssh", "ssl", "sys", "tcp", "the", "tls",
-    "too", "try", "ts", "two", "txt", "udp", "ui", "up", "uri", "url",
-    "use", "ux", "val", "vps", "was", "way", "we", "web", "who", "win",
-    "wp", "wsl", "xml", "yes", "you", "zip"
+    "aws", "bad", "bat", "be", "big", "bin", "but", "by", "can", "cd",
+    "cfg", "cli", "cmd", "con", "crm", "css", "csv", "day", "db", "dev",
+    "did", "dir", "dns", "do", "doc", "dom", "env", "err", "few", "flux",
+    "for", "ftp", "get", "git", "go", "had", "has", "he", "her", "him",
+    "his", "how", "hub", "id", "if", "in", "io", "ip", "is", "it",
+    "its", "js", "key", "let", "lib", "log", "low", "ls", "mac", "mad",
+    "map", "may", "md", "me", "my", "net", "new", "no", "not", "now",
+    "npm", "of", "off", "old", "on", "one", "or", "org", "os", "our",
+    "out", "own", "pdf", "pkg", "png", "pr", "py", "red", "rs", "run",
+    "sad", "say", "see", "sh", "she", "so", "sql", "src", "ssh", "ssl",
+    "sys", "tcp", "the", "tls", "too", "try", "ts", "two", "txt", "udp",
+    "ui", "up", "uri", "url", "use", "ux", "val", "vat", "vpn", "vps",
+    "was", "way", "we", "web", "who", "win", "wp", "wsl", "xml", "yes",
+    "you", "zip"
 ];
 
 include!(concat!(env!("OUT_DIR"), "/dictionaries_gen.rs"));
+
+/// Settings snapshot passed into detection functions so they don't need to
+/// re-acquire the RwLock on every call.  Built once per keypress in hook.rs.
+#[derive(Debug, Default)]
+pub struct DetectionConfig {
+    pub ignored_words: HashSet<String>,
+    pub word_corrections: HashMap<String, u16>,
+    pub preferred_cyrillic: crate::settings::PreferredCyrillic,
+    /// Dominant layout inferred from the last few typed words, if any.
+    /// When set and equal to `active_lang`, the detector applies a stricter
+    /// threshold (context_factor) before switching away from that layout.
+    pub context_lang: Option<u16>,
+}
 
 #[derive(Debug, Clone)]
 struct Entry {
@@ -183,19 +197,11 @@ impl WordBuffer {
         })
     }
 
-    /// Auto-detect mismatch at a word boundary (requires >= 2 buffered keys).
-    ///
-    /// Long words (>= 4 chars) are scored using the bigram model.
-    /// Short words (2-3 chars) are matched against a high-frequency dictionary.
-    ///
-    /// `active_lang` is the low 16-bit word of the foreground window's HKL.
-    #[allow(dead_code)]
-    pub fn detect_mismatch(&self, active_lang: u16) -> Option<SwitchAction> {
-        self.detect_impl(active_lang, 1.0)
-    }
-
-    pub fn detect_mismatch_with_sensitivity(&self, active_lang: u16, sensitivity: f32) -> Option<SwitchAction> {
-        self.detect_impl(active_lang, sensitivity)
+    /// Hotkey forced switch — backward-compat wrapper using default config.
+    /// Production code calls `force_switch_with_config` directly.
+    #[cfg(test)]
+    pub fn force_switch(&self, active_lang: u16) -> Option<SwitchAction> {
+        self.force_switch_with_config(active_lang, &DetectionConfig::default())
     }
 
     /// Hotkey forced switch (requires >= 1 buffered key).
@@ -203,7 +209,8 @@ impl WordBuffer {
     /// Unlike auto-detection, bypasses the bigram score threshold entirely —
     /// the user explicitly requested the switch, so we trust their intent.
     /// Returns None only when the buffer is empty or the translation is invalid.
-    pub fn force_switch(&self, active_lang: u16) -> Option<SwitchAction> {
+    /// Uses `is_upper` from entries so mixed-case words round-trip correctly.
+    pub fn force_switch_with_config(&self, active_lang: u16, config: &DetectionConfig) -> Option<SwitchAction> {
         if self.entries.is_empty() {
             return None;
         }
@@ -212,6 +219,8 @@ impl WordBuffer {
         // the target layout (e.g. EN), which would send force_switch in the wrong
         // direction.  entry_lang is set before any mid-word switch happens.
         let active_lang = if self.entry_lang != 0 { self.entry_lang } else { active_lang };
+
+        // Compute case-correct translations so mixed-case words round-trip exactly.
         let en: String = self
             .entries
             .iter()
@@ -232,7 +241,7 @@ impl WordBuffer {
             if en.chars().count() != self.entries.len() {
                 return None;
             }
-            let new_word = apply_case_correction(&self.entries, &en);
+            let new_word = apply_case_correction(&self.entries, &en.to_lowercase());
             Some(SwitchAction {
                 backspaces: self.len(),
                 new_word,
@@ -240,37 +249,31 @@ impl WordBuffer {
                 original_word: if layout::hkl_is_russian(active_lang) { ru } else { ua },
             })
         } else if layout::hkl_is_english(active_lang) {
-            let ru_valid = ru.chars().count() == self.entries.len() && ru.chars().all(is_cyrillic_or_ua);
-            let ua_valid = ua.chars().count() == self.entries.len() && ua.chars().all(is_cyrillic_or_ua);
+            let ru_lower = ru.to_lowercase();
+            let ua_lower = ua.to_lowercase();
+            let ru_valid = ru.chars().count() == self.entries.len() && ru_lower.chars().all(is_cyrillic_or_ua);
+            let ua_valid = ua.chars().count() == self.entries.len() && ua_lower.chars().all(is_cyrillic_or_ua);
 
             if !ru_valid && !ua_valid {
                 return None;
             }
 
-            let preferred_cyrillic = crate::globals::SETTINGS
-                .get()
-                .and_then(|s| s.try_read().ok())
-                .map(|s| s.preferred_cyrillic.clone())
-                .unwrap_or(crate::settings::PreferredCyrillic::Auto);
-
             let to_ru: Option<bool> = if ru_valid && ua_valid {
-                let ru_lower_fs = ru.to_lowercase();
-                let ua_lower_fs = ua.to_lowercase();
-                let ru_in_dict = RU_COMMON_WORDS.binary_search(&ru_lower_fs.as_str()).is_ok();
-                let ua_in_dict = UA_COMMON_WORDS.binary_search(&ua_lower_fs.as_str()).is_ok();
+                let ru_in_dict = RU_COMMON_WORDS.binary_search(&ru_lower.as_str()).is_ok();
+                let ua_in_dict = UA_COMMON_WORDS.binary_search(&ua_lower.as_str()).is_ok();
                 resolve_cyrillic_preference(
-                    &preferred_cyrillic,
+                    &config.preferred_cyrillic,
                     true,
-                    &ua_lower_fs,
+                    &ua_lower,
                     || {
                         if ru_in_dict && !ua_in_dict {
                             true
                         } else if ua_in_dict && !ru_in_dict {
                             false
                         } else {
-                            let score_ru = bigrams::score_ru(&ru_lower_fs);
-                            let score_ua = bigrams::score_ua(&ua_lower_fs);
-                            let required_delta = if has_ua_markers(&ua_lower_fs) {
+                            let score_ru = bigrams::score_ru(&ru_lower);
+                            let score_ua = bigrams::score_ua(&ua_lower);
+                            let required_delta = if has_ua_markers(&ua_lower) {
                                 RU_UA_SCORE_MIN_DELTA
                             } else {
                                 RU_UA_SCORE_STRONG_DELTA
@@ -280,13 +283,12 @@ impl WordBuffer {
                     },
                 )
             } else {
-                // Only one candidate valid — use it regardless of preference.
                 Some(ru_valid)
             };
 
             match to_ru {
                 Some(true) => {
-                    let new_word = apply_case_correction(&self.entries, &ru);
+                    let new_word = apply_case_correction(&self.entries, &ru_lower);
                     Some(SwitchAction {
                         backspaces: self.len(),
                         new_word,
@@ -295,7 +297,7 @@ impl WordBuffer {
                     })
                 }
                 Some(false) => {
-                    let new_word = apply_case_correction(&self.entries, &ua);
+                    let new_word = apply_case_correction(&self.entries, &ua_lower);
                     Some(SwitchAction {
                         backspaces: self.len(),
                         new_word,
@@ -303,8 +305,6 @@ impl WordBuffer {
                         original_word: en,
                     })
                 }
-                // Both blocked by preference (shouldn't happen when only one is valid,
-                // but guard against it anyway).
                 None => None,
             }
         } else {
@@ -312,214 +312,255 @@ impl WordBuffer {
         }
     }
 
+    /// Combined boundary detection + snapshot for hook.rs (avoids double computation).
+    pub fn detect_with_snapshot(
+        &self, active_lang: u16, sensitivity: f32, config: &DetectionConfig,
+    ) -> (Option<SwitchAction>, Option<DetectionSnapshot>) {
+        self.detect_impl_opt(active_lang, sensitivity, false, config)
+    }
+
+    /// Combined on-the-fly detection + snapshot for hook.rs.
+    pub fn detect_on_the_fly_with_snapshot(
+        &self, active_lang: u16, sensitivity: f32, config: &DetectionConfig,
+    ) -> (Option<SwitchAction>, Option<DetectionSnapshot>) {
+        self.detect_impl_opt(active_lang, sensitivity, true, config)
+    }
+
+    // ── Backward-compat wrappers (used by unit tests) ────────────────────────
+
+    #[allow(dead_code)]
+    pub fn detect_mismatch(&self, active_lang: u16) -> Option<SwitchAction> {
+        self.detect_impl_opt(active_lang, 1.0, false, &DetectionConfig::default()).0
+    }
+
+    pub fn detect_mismatch_with_sensitivity(&self, active_lang: u16, sensitivity: f32) -> Option<SwitchAction> {
+        self.detect_impl_opt(active_lang, sensitivity, false, &DetectionConfig::default()).0
+    }
+
     pub fn detect_mismatch_on_the_fly(&self, active_lang: u16, sensitivity: f32) -> Option<SwitchAction> {
-        self.detect_impl_opt(active_lang, sensitivity, true)
+        self.detect_impl_opt(active_lang, sensitivity, true, &DetectionConfig::default()).0
     }
 
-    fn detect_impl(&self, active_lang: u16, sensitivity: f32) -> Option<SwitchAction> {
-        self.detect_impl_opt(active_lang, sensitivity, false)
-    }
-
-    fn detect_impl_opt(&self, active_lang: u16, sensitivity: f32, on_the_fly: bool) -> Option<SwitchAction> {
+    fn detect_impl_opt(
+        &self, active_lang: u16, sensitivity: f32, on_the_fly: bool, config: &DetectionConfig,
+    ) -> (Option<SwitchAction>, Option<DetectionSnapshot>) {
+        // ── Early exits before any translation work ──────────────────────────
         if self.has_switched {
-            return None;
+            return (None, None);
         }
         let len = self.entries.len();
-        let backspaces = if on_the_fly { len - 1 } else { len };
 
         if on_the_fly {
-            if len < 5 {
-                return None;
-            }
+            if len < 5 { return (None, None); }
         } else {
-            if len == 0 {
-                return None;
-            }
+            if len == 0 { return (None, None); }
         }
 
-        // Skip words whose keys are all the same (e.g. "jjjjj" → "ооооо").
-        // Repeated-key runs have near-identical bigram scores in every language
-        // and produce false switches on key holds or rapid tapping.
-        // Only meaningful for len >= 2; single-char words are handled separately below.
+        // Skip repeated-key runs (e.g. "jjjjj" → "ооооо"); bigram scores are
+        // near-identical across layouts and trigger spurious switches.
         if len >= 2 {
             let first_vk = self.entries[0].vk;
             if self.entries.iter().all(|e| e.vk == first_vk) {
-                return None;
+                return (None, None);
             }
         }
 
-        // Translate VK codes through EN, RU, and UA.
-        let en: String = self
-            .entries
-            .iter()
-            .filter_map(|e| layout::vk_to_en(e.vk, e.is_upper))
-            .collect();
-        let ru: String = self
-            .entries
-            .iter()
-            .filter_map(|e| layout::vk_to_ru(e.vk, e.is_upper))
-            .collect();
-        let ua: String = self
-            .entries
-            .iter()
-            .filter_map(|e| layout::vk_to_ua(e.vk, e.is_upper))
-            .collect();
+        // ── Compute translations once (always lowercase for scoring/snapshot) ──
+        let en: String = self.entries.iter()
+            .filter_map(|e| layout::vk_to_en(e.vk, false)).collect();
+        let ru: String = self.entries.iter()
+            .filter_map(|e| layout::vk_to_ru(e.vk, false)).collect();
+        let ua: String = self.entries.iter()
+            .filter_map(|e| layout::vk_to_ua(e.vk, false)).collect();
 
         let en_ok = en.chars().count() == len;
         let ru_ok = ru.chars().count() == len;
         let ua_ok = ua.chars().count() == len;
 
-        let en_lower = en.to_lowercase();
-        let ru_lower = ru.to_lowercase();
-        let ua_lower = ua.to_lowercase();
-
-        // ── 0. Check whitelisted / ignored words (Undo feedback loop) ────────
-        let (ignored_words, word_corrections, preferred_cyrillic) = crate::globals::SETTINGS
-            .get()
-            .and_then(|s| s.try_read().ok())
-            .map(|s| (s.ignored_words.clone(), s.word_corrections.clone(), s.preferred_cyrillic.clone()))
-            .unwrap_or_else(|| (Vec::new(), HashMap::new(), crate::settings::PreferredCyrillic::Auto));
-
-        let word_to_check = if layout::hkl_is_russian(active_lang) {
-            &ru_lower
-        } else if layout::hkl_is_ukrainian(active_lang) {
-            &ua_lower
-        } else {
-            &en_lower
+        // Build snapshot once; reuse pre-computed scores below.
+        let score_en = bigrams::score_en(&en);
+        let score_ru = bigrams::score_ru(&ru);
+        let score_ua = bigrams::score_ua(&ua);
+        let snap = DetectionSnapshot {
+            en_word: en.clone(),
+            ru_word: ru.clone(),
+            ua_word: ua.clone(),
+            score_en,
+            score_ru,
+            score_ua,
+            len,
         };
 
-        if ignored_words.contains(word_to_check) {
-            return None;
+        let backspaces = if on_the_fly { len - 1 } else { len };
+
+        // Macro to wrap a SwitchAction with the shared snapshot.
+        macro_rules! sw {
+            ($action:expr) => { return (Some($action), Some(snap)) };
+        }
+        macro_rules! skip {
+            () => { return (None, Some(snap)) };
         }
 
-        // ── 0b. User-confirmed corrections override the statistical model ──────
-        // The key is always the EN key sequence (layout-agnostic).
-        // Only apply when the target layout differs from the active one; if the
-        // user is already in the correct layout, the word was typed correctly.
-        if let Some(&target_lang) = word_corrections.get(&en_lower) {
-            if target_lang == active_lang {
-                // Already in the target layout — word is correct, no switch needed.
-            } else if target_lang == layout::LANG_RU && ru_ok && ru.chars().all(is_cyrillic_or_ua) {
-                let new_word = apply_case_correction(&self.entries, &ru);
-                return Some(SwitchAction {
-                    backspaces,
-                    new_word,
-                    target_lang,
-                    original_word: if layout::hkl_is_english(active_lang) { en.clone() }
-                                   else if layout::hkl_is_russian(active_lang) { ru.clone() }
-                                   else { ua.clone() },
-                });
-            } else if target_lang == layout::LANG_UA && ua_ok && ua.chars().all(is_cyrillic_or_ua) {
-                let new_word = apply_case_correction(&self.entries, &ua);
-                return Some(SwitchAction {
-                    backspaces,
-                    new_word,
-                    target_lang,
-                    original_word: if layout::hkl_is_english(active_lang) { en.clone() }
-                                   else if layout::hkl_is_russian(active_lang) { ru.clone() }
-                                   else { ua.clone() },
-                });
-            } else if target_lang == layout::LANG_EN_US && en_ok {
-                let new_word = apply_case_correction(&self.entries, &en);
-                return Some(SwitchAction {
-                    backspaces,
-                    new_word,
-                    target_lang,
-                    original_word: if layout::hkl_is_russian(active_lang) { ru.clone() }
-                                   else { ua.clone() },
-                });
+        // ── 0. Whitelisted / ignored words ───────────────────────────────────
+        let word_to_check = if layout::hkl_is_russian(active_lang) { &ru }
+            else if layout::hkl_is_ukrainian(active_lang) { &ua }
+            else { &en };
+        if config.ignored_words.contains(word_to_check.as_str()) {
+            skip!();
+        }
+
+        // ── 0b. User-confirmed corrections override the statistical model ─────
+        if let Some(&target_lang) = config.word_corrections.get(en.as_str()) {
+            if target_lang != active_lang {
+                if target_lang == layout::LANG_RU && ru_ok && ru.chars().all(is_cyrillic_or_ua) {
+                    sw!(SwitchAction {
+                        backspaces,
+                        new_word: apply_case_correction(&self.entries, &ru),
+                        target_lang,
+                        original_word: if layout::hkl_is_english(active_lang) { en.clone() }
+                                       else if layout::hkl_is_russian(active_lang) { ru.clone() }
+                                       else { ua.clone() },
+                    });
+                } else if target_lang == layout::LANG_UA && ua_ok && ua.chars().all(is_cyrillic_or_ua) {
+                    sw!(SwitchAction {
+                        backspaces,
+                        new_word: apply_case_correction(&self.entries, &ua),
+                        target_lang,
+                        original_word: if layout::hkl_is_english(active_lang) { en.clone() }
+                                       else if layout::hkl_is_russian(active_lang) { ru.clone() }
+                                       else { ua.clone() },
+                    });
+                } else if target_lang == layout::LANG_EN_US && en_ok {
+                    sw!(SwitchAction {
+                        backspaces,
+                        new_word: apply_case_correction(&self.entries, &en),
+                        target_lang,
+                        original_word: if layout::hkl_is_russian(active_lang) { ru.clone() }
+                                       else { ua.clone() },
+                    });
+                }
             }
             // Correction present but translation invalid — fall through to model.
         }
 
-        // ── 1. Check if the word is a valid word in the current layout ────────
-        if layout::hkl_is_russian(active_lang) && ru_ok && RU_COMMON_WORDS.binary_search(&ru_lower.as_str()).is_ok() {
-            return None;
-        } else if layout::hkl_is_ukrainian(active_lang) && ua_ok && UA_COMMON_WORDS.binary_search(&ua_lower.as_str()).is_ok() {
-            return None;
-        } else if layout::hkl_is_english(active_lang) && en_ok && EN_COMMON_WORDS.binary_search(&en_lower.as_str()).is_ok() {
-            return None;
-        }
+        // ── 1. Valid word in the current layout ──────────────────────────────
+        if layout::hkl_is_russian(active_lang) && ru_ok
+            && RU_COMMON_WORDS.binary_search(&ru.as_str()).is_ok() { skip!(); }
+        else if layout::hkl_is_ukrainian(active_lang) && ua_ok
+            && UA_COMMON_WORDS.binary_search(&ua.as_str()).is_ok() { skip!(); }
+        else if layout::hkl_is_english(active_lang) && en_ok
+            && EN_COMMON_WORDS.binary_search(&en.as_str()).is_ok() { skip!(); }
 
-        // ── 1b. Cross-layout EN dictionary check for Cyrillic-active layouts ──
-        // Mirrors the COMMON_EN_SHORT path in section 4 but for 4+ char words.
-        // If a known English word is typed in a Cyrillic layout, switch to EN.
-        if !on_the_fly && en_ok && EN_COMMON_WORDS.binary_search(&en_lower.as_str()).is_ok() {
+        // ── 1b. Cross-layout EN dict check for Cyrillic-active layouts ────────
+        // Short words (≤4 chars) like "ctrl", "exit", "sudo" are often inline
+        // tech references in Cyrillic text, not mistyped EN.  When the recent
+        // context confirms we're in Cyrillic mode, defer to the bigram model
+        // (step 5) so the normal threshold applies rather than auto-switching.
+        let skip_short_dict = len <= 4 && config.context_lang == Some(active_lang);
+        if !on_the_fly && !skip_short_dict && en_ok && EN_COMMON_WORDS.binary_search(&en.as_str()).is_ok() {
             if layout::hkl_is_russian(active_lang) && ru_ok && ru.chars().all(is_cyrillic_or_ua) {
-                let new_word = apply_case_correction(&self.entries, &en);
-                return Some(SwitchAction {
+                sw!(SwitchAction {
                     backspaces,
-                    new_word,
+                    new_word: apply_case_correction(&self.entries, &en),
                     target_lang: layout::LANG_EN_US,
                     original_word: ru.clone(),
                 });
             } else if layout::hkl_is_ukrainian(active_lang) && ua_ok && ua.chars().all(is_cyrillic_or_ua) {
-                let new_word = apply_case_correction(&self.entries, &en);
-                return Some(SwitchAction {
+                sw!(SwitchAction {
                     backspaces,
-                    new_word,
+                    new_word: apply_case_correction(&self.entries, &en),
                     target_lang: layout::LANG_EN_US,
                     original_word: ua.clone(),
                 });
             }
         }
 
-        // ── 3. Check for single-letter words (1 char) ────────────────────────
-        // Only switch Cyrillic→EN for unambiguous single-char cases ('a', 'i').
-        // EN→Cyrillic is intentionally skipped: too many common EN letters (d, r,
-        // c, b, f, j, e, z) map to Russian prepositions, causing false positives.
+        // ── 3. Single-letter words ────────────────────────────────────────────
         if !on_the_fly && len == 1 {
             let common_ru_single = ["в", "и", "а", "о", "с", "у", "я", "к"];
             let common_ua_single = ["в", "і", "а", "о", "у", "я", "є", "з"];
             let common_en_single = ["a", "i"];
-
             if layout::hkl_is_russian(active_lang) {
-                if ru_ok && en_ok && !common_ru_single.contains(&ru_lower.as_str()) && common_en_single.contains(&en_lower.as_str()) {
-                    let new_word = apply_case_correction(&self.entries, &en);
-                    return Some(SwitchAction {
+                if ru_ok && en_ok && !common_ru_single.contains(&ru.as_str())
+                    && common_en_single.contains(&en.as_str())
+                {
+                    sw!(SwitchAction {
                         backspaces,
-                        new_word,
+                        new_word: apply_case_correction(&self.entries, &en),
                         target_lang: layout::LANG_EN_US,
                         original_word: ru,
                     });
                 }
             } else if layout::hkl_is_ukrainian(active_lang) {
-                if ua_ok && en_ok && !common_ua_single.contains(&ua_lower.as_str()) && common_en_single.contains(&en_lower.as_str()) {
-                    let new_word = apply_case_correction(&self.entries, &en);
-                    return Some(SwitchAction {
+                if ua_ok && en_ok && !common_ua_single.contains(&ua.as_str())
+                    && common_en_single.contains(&en.as_str())
+                {
+                    sw!(SwitchAction {
                         backspaces,
-                        new_word,
+                        new_word: apply_case_correction(&self.entries, &en),
                         target_lang: layout::LANG_EN_US,
                         original_word: ua,
                     });
                 }
+            } else if layout::hkl_is_english(active_lang) {
+                if ru_ok && en_ok && !common_en_single.contains(&en.as_str()) {
+                    let ru_common = common_ru_single.contains(&ru.as_str());
+                    let ua_common = common_ua_single.contains(&ua.as_str());
+                    if ru_common || ua_common {
+                        let to_ru = resolve_cyrillic_preference(
+                            &config.preferred_cyrillic,
+                            ru_common,
+                            &ua,
+                            || {
+                                if ru_common && !ua_common {
+                                    true
+                                } else if ua_common && !ru_common {
+                                    false
+                                } else {
+                                    true
+                                }
+                            },
+                        );
+                        if to_ru == Some(true) {
+                            sw!(SwitchAction {
+                                backspaces,
+                                new_word: apply_case_correction(&self.entries, &ru),
+                                target_lang: layout::LANG_RU,
+                                original_word: en,
+                            });
+                        } else if to_ru == Some(false) {
+                            sw!(SwitchAction {
+                                backspaces,
+                                new_word: apply_case_correction(&self.entries, &ua),
+                                target_lang: layout::LANG_UA,
+                                original_word: en,
+                            });
+                        }
+                    }
+                }
             }
-            return None;
+            skip!();
         }
 
         // ── 4. Dictionary-based check for short words (2-3 chars) ─────────────
         if !on_the_fly && (len == 2 || len == 3) {
             if layout::hkl_is_russian(active_lang) {
                 if ru_ok && en_ok {
-                    let is_common_en = COMMON_EN_SHORT.binary_search(&en_lower.as_str()).is_ok();
-                    let is_common_ru = COMMON_RU_SHORT.binary_search(&ru_lower.as_str()).is_ok();
+                    let is_common_en = COMMON_EN_SHORT.binary_search(&en.as_str()).is_ok();
+                    let is_common_ru = COMMON_RU_SHORT.binary_search(&ru.as_str()).is_ok();
                     if is_common_en && !is_common_ru {
-                        let new_word = apply_case_correction(&self.entries, &en);
-                        return Some(SwitchAction {
+                        sw!(SwitchAction {
                             backspaces,
-                            new_word,
+                            new_word: apply_case_correction(&self.entries, &en),
                             target_lang: layout::LANG_EN_US,
                             original_word: ru,
                         });
                     }
-
-                    // Cross-Cyrillic check for short words
-                    let is_common_ua = COMMON_UA_SHORT.binary_search(&ua_lower.as_str()).is_ok();
-                    if is_common_ua && !is_common_ru && has_ua_markers(&ua_lower) {
-                        let new_word = apply_case_correction(&self.entries, &ua);
-                        return Some(SwitchAction {
+                    let is_common_ua = COMMON_UA_SHORT.binary_search(&ua.as_str()).is_ok();
+                    if is_common_ua && !is_common_ru && has_ua_markers(&ua) {
+                        sw!(SwitchAction {
                             backspaces,
-                            new_word,
+                            new_word: apply_case_correction(&self.entries, &ua),
                             target_lang: layout::LANG_UA,
                             original_word: ru,
                         });
@@ -527,25 +568,21 @@ impl WordBuffer {
                 }
             } else if layout::hkl_is_ukrainian(active_lang) {
                 if ua_ok && en_ok {
-                    let is_common_en = COMMON_EN_SHORT.binary_search(&en_lower.as_str()).is_ok();
-                    let is_common_ua = COMMON_UA_SHORT.binary_search(&ua_lower.as_str()).is_ok();
+                    let is_common_en = COMMON_EN_SHORT.binary_search(&en.as_str()).is_ok();
+                    let is_common_ua = COMMON_UA_SHORT.binary_search(&ua.as_str()).is_ok();
                     if is_common_en && !is_common_ua {
-                        let new_word = apply_case_correction(&self.entries, &en);
-                        return Some(SwitchAction {
+                        sw!(SwitchAction {
                             backspaces,
-                            new_word,
+                            new_word: apply_case_correction(&self.entries, &en),
                             target_lang: layout::LANG_EN_US,
                             original_word: ua,
                         });
                     }
-
-                    // Cross-Cyrillic check for short words
-                    let is_common_ru = COMMON_RU_SHORT.binary_search(&ru_lower.as_str()).is_ok();
-                    if is_common_ru && !is_common_ua && has_ru_markers(&ru_lower) {
-                        let new_word = apply_case_correction(&self.entries, &ru);
-                        return Some(SwitchAction {
+                    let is_common_ru = COMMON_RU_SHORT.binary_search(&ru.as_str()).is_ok();
+                    if is_common_ru && !is_common_ua && has_ru_markers(&ru) {
+                        sw!(SwitchAction {
                             backspaces,
-                            new_word,
+                            new_word: apply_case_correction(&self.entries, &ru),
                             target_lang: layout::LANG_RU,
                             original_word: ua,
                         });
@@ -553,330 +590,160 @@ impl WordBuffer {
                 }
             } else if layout::hkl_is_english(active_lang) {
                 if en_ok {
-                    let is_common_en = COMMON_EN_SHORT.binary_search(&en_lower.as_str()).is_ok();
-                    let is_common_ru = ru_ok && COMMON_RU_SHORT.binary_search(&ru_lower.as_str()).is_ok();
-                    let is_common_ua = ua_ok && COMMON_UA_SHORT.binary_search(&ua_lower.as_str()).is_ok();
-
+                    let is_common_en = COMMON_EN_SHORT.binary_search(&en.as_str()).is_ok();
+                    let is_common_ru = ru_ok && COMMON_RU_SHORT.binary_search(&ru.as_str()).is_ok();
+                    let is_common_ua = ua_ok && COMMON_UA_SHORT.binary_search(&ua.as_str()).is_ok();
                     if !is_common_en {
                         if is_common_ru && is_common_ua {
                             let to_ru = resolve_cyrillic_preference(
-                                &preferred_cyrillic, true, &ua_lower,
+                                &config.preferred_cyrillic, true, &ua,
                                 || {
-                                    let score_ru = bigrams::score_ru(&ru_lower);
-                                    let score_ua = bigrams::score_ua(&ua_lower);
-                                    if ru_lower == ua_lower {
-                                        score_ua - score_ru < RU_UA_SCORE_MIN_DELTA
-                                    } else {
-                                        score_ru >= score_ua
-                                    }
+                                    if ru == ua { score_ua - score_ru < RU_UA_SCORE_MIN_DELTA }
+                                    else { score_ru >= score_ua }
                                 },
                             );
-                            if let Some(true) = to_ru {
-                                let new_word = apply_case_correction(&self.entries, &ru);
-                                return Some(SwitchAction {
-                                    backspaces,
-                                    new_word,
-                                    target_lang: layout::LANG_RU,
-                                    original_word: en,
-                                });
+                            if to_ru == Some(true) {
+                                sw!(SwitchAction { backspaces, new_word: apply_case_correction(&self.entries, &ru), target_lang: layout::LANG_RU, original_word: en });
                             } else if to_ru == Some(false) {
-                                let new_word = apply_case_correction(&self.entries, &ua);
-                                return Some(SwitchAction {
-                                    backspaces,
-                                    new_word,
-                                    target_lang: layout::LANG_UA,
-                                    original_word: en,
-                                });
+                                sw!(SwitchAction { backspaces, new_word: apply_case_correction(&self.entries, &ua), target_lang: layout::LANG_UA, original_word: en });
                             }
                         } else if is_common_ru {
-                            let new_word = apply_case_correction(&self.entries, &ru);
-                            return Some(SwitchAction {
-                                    backspaces,
-                                    new_word,
-                                    target_lang: layout::LANG_RU,
-                                    original_word: en,
-                            });
+                            sw!(SwitchAction { backspaces, new_word: apply_case_correction(&self.entries, &ru), target_lang: layout::LANG_RU, original_word: en });
                         } else if is_common_ua {
-                            // Variant B (Auto): require UA-specific letters for UA
-                            let allow_ua = match &preferred_cyrillic {
+                            let allow_ua = match &config.preferred_cyrillic {
                                 crate::settings::PreferredCyrillic::Ua => true,
                                 crate::settings::PreferredCyrillic::Ru => false,
-                                crate::settings::PreferredCyrillic::Auto => has_ua_markers(&ua_lower),
+                                crate::settings::PreferredCyrillic::Auto => has_ua_markers(&ua),
                             };
                             if allow_ua {
-                                let new_word = apply_case_correction(&self.entries, &ua);
-                                return Some(SwitchAction {
-                                    backspaces,
-                                    new_word,
-                                    target_lang: layout::LANG_UA,
-                                    original_word: en,
-                                });
+                                sw!(SwitchAction { backspaces, new_word: apply_case_correction(&self.entries, &ua), target_lang: layout::LANG_UA, original_word: en });
                             }
                         }
                     }
                 }
             }
-            return None;
+            skip!();
         }
 
-        // ── 5. Standard bigram/trigram language-model check (>= 4 chars) ──────
+        // ── 5. Bigram/trigram model (>= 4 chars, on-the-fly >= 5) ────────────
         let min_len = if on_the_fly { 5 } else { 4 };
-        if len < min_len {
-            return None;
-        }
+        if len < min_len { skip!(); }
 
-        let base_threshold = switching_threshold(len) / sensitivity;
+        // When the recent context confirms the active layout, require a larger
+        // score gap before switching away.  Factor 1.3 means the rival layout
+        // must outscore the current one by 30% more than the base threshold.
+        let context_factor: f32 = if config.context_lang == Some(active_lang) { 1.3 } else { 1.0 };
+        let base_threshold = switching_threshold(len) / sensitivity * context_factor;
 
         if layout::hkl_is_russian(active_lang) {
-            if !ru_ok || !en_ok {
-                return None;
-            }
-            if !ru.chars().all(is_cyrillic_or_ua) {
-                return None;
-            }
-            let score_en = bigrams::score_en(&en_lower);
-            let score_ru = bigrams::score_ru(&ru_lower);
-            let score_ua = if ua_ok && ua.chars().all(is_cyrillic_or_ua) {
-                bigrams::score_ua(&ua_lower)
-            } else {
-                f32::NEG_INFINITY
-            };
-
-            let en_threshold = base_threshold * if has_ru_markers(&ru_lower) {
+            if !ru_ok || !en_ok || !ru.chars().all(is_cyrillic_or_ua) { skip!(); }
+            let score_ua_eff = if ua_ok && ua.chars().all(is_cyrillic_or_ua) { score_ua } else { f32::NEG_INFINITY };
+            let en_thr = base_threshold * if has_ru_markers(&ru) {
                 if on_the_fly { 2.5 } else { 1.5 }
             } else {
                 if on_the_fly { 2.0 } else { 1.0 }
             };
-
-            if score_en - score_ru > en_threshold {
-                let new_word = apply_case_correction(&self.entries, &en);
-                return Some(SwitchAction {
-                    backspaces,
-                    new_word,
-                    target_lang: layout::LANG_EN_US,
-                    original_word: ru,
-                });
+            if score_en - score_ru > en_thr {
+                sw!(SwitchAction { backspaces, new_word: apply_case_correction(&self.entries, &en), target_lang: layout::LANG_EN_US, original_word: ru });
             }
-
-            // Cross-Cyrillic switch RU → UA
-            // With Ru preference: never; with Auto: require UA markers.
-            let allow_cross_ru_ua = match &preferred_cyrillic {
+            let allow_cross = match &config.preferred_cyrillic {
                 crate::settings::PreferredCyrillic::Ru => false,
-                crate::settings::PreferredCyrillic::Auto => has_ua_markers(&ua_lower),
+                crate::settings::PreferredCyrillic::Auto => has_ua_markers(&ua),
                 crate::settings::PreferredCyrillic::Ua => true,
             };
-            if allow_cross_ru_ua && score_ua.is_finite() {
-                let cross_threshold = base_threshold * if has_ua_markers(&ua_lower) {
-                    1.5
-                } else {
-                    2.0
-                };
-                if score_ua - score_ru > cross_threshold {
-                    let new_word = apply_case_correction(&self.entries, &ua);
-                    return Some(SwitchAction {
-                        backspaces,
-                        new_word,
-                        target_lang: layout::LANG_UA,
-                        original_word: ru,
-                    });
+            if allow_cross && score_ua_eff.is_finite() {
+                let cross_thr = base_threshold * if has_ua_markers(&ua) { 1.5 } else { 2.0 };
+                if score_ua_eff - score_ru > cross_thr {
+                    sw!(SwitchAction { backspaces, new_word: apply_case_correction(&self.entries, &ua), target_lang: layout::LANG_UA, original_word: ru });
                 }
             }
         } else if layout::hkl_is_ukrainian(active_lang) {
-            if !ua_ok || !en_ok {
-                return None;
-            }
-            if !ua.chars().all(is_cyrillic_or_ua) {
-                return None;
-            }
-            let score_en = bigrams::score_en(&en_lower);
-            let score_ua = bigrams::score_ua(&ua_lower);
-            let score_ru = if ru_ok && ru.chars().all(is_cyrillic_or_ua) {
-                bigrams::score_ru(&ru_lower)
-            } else {
-                f32::NEG_INFINITY
-            };
-
-            let en_threshold = base_threshold * if has_ua_markers(&ua_lower) {
+            if !ua_ok || !en_ok || !ua.chars().all(is_cyrillic_or_ua) { skip!(); }
+            let score_ru_eff = if ru_ok && ru.chars().all(is_cyrillic_or_ua) { score_ru } else { f32::NEG_INFINITY };
+            let en_thr = base_threshold * if has_ua_markers(&ua) {
                 if on_the_fly { 2.5 } else { 1.5 }
             } else {
                 if on_the_fly { 2.0 } else { 1.0 }
             };
-
-            if score_en - score_ua > en_threshold {
-                let new_word = apply_case_correction(&self.entries, &en);
-                return Some(SwitchAction {
-                    backspaces,
-                    new_word,
-                    target_lang: layout::LANG_EN_US,
-                    original_word: ua,
-                });
+            if score_en - score_ua > en_thr {
+                sw!(SwitchAction { backspaces, new_word: apply_case_correction(&self.entries, &en), target_lang: layout::LANG_EN_US, original_word: ua });
             }
-
-            // Cross-Cyrillic switch UA → RU
-            if score_ru.is_finite() {
-                let cross_threshold = base_threshold * if has_ru_markers(&ru_lower) {
-                    1.5
-                } else {
-                    2.0
-                };
-                if score_ru - score_ua > cross_threshold {
-                    let new_word = apply_case_correction(&self.entries, &ru);
-                    return Some(SwitchAction {
-                        backspaces,
-                        new_word,
-                        target_lang: layout::LANG_RU,
-                        original_word: ua,
-                    });
+            if score_ru_eff.is_finite() {
+                let cross_thr = base_threshold * if has_ru_markers(&ru) { 1.5 } else { 2.0 };
+                if score_ru_eff - score_ua > cross_thr {
+                    sw!(SwitchAction { backspaces, new_word: apply_case_correction(&self.entries, &ru), target_lang: layout::LANG_RU, original_word: ua });
                 }
             }
         } else if layout::hkl_is_english(active_lang) {
-            if !en_ok {
-                return None;
-            }
-            let score_en = bigrams::score_en(&en_lower);
-
+            if !en_ok { skip!(); }
             let ru_candidate = ru_ok && ru.chars().all(is_cyrillic_or_ua);
             let ua_candidate = ua_ok && ua.chars().all(is_cyrillic_or_ua);
+            if !ru_candidate && !ua_candidate { skip!(); }
 
-            if !ru_candidate && !ua_candidate {
-                return None;
-            }
+            let en_has_punct = en.chars().any(|c| !c.is_alphabetic());
+            if on_the_fly && ru == ua && !en_has_punct { skip!(); }
 
-            // For on-the-fly: skip when RU and UA produce the same word (can't
-            // disambiguate target Cyrillic script). Exception: sequences whose EN
-            // transliteration contains non-alphabetic characters cannot be valid
-            // English words, so the punct-dict shortcut below can still fire safely.
-            let en_has_punct = en_lower.chars().any(|c| !c.is_alphabetic());
-            if on_the_fly && ru_lower == ua_lower && !en_has_punct {
-                return None;
-            }
-
-            // Dictionary shortcut for words whose EN transliteration contains
-            // non-alphabetic characters (e.g. ';' → 'ж' for "нужно"→"ye;yj").
-            // Such sequences cannot be real English words, so bypass the bigram
-            // threshold and rely on the common-word dictionary instead.
-            // Works for both boundary and on-the-fly detection.
             if len <= 6 && en_has_punct {
-                let ru_in_dict = ru_candidate && RU_COMMON_WORDS.binary_search(&ru_lower.as_str()).is_ok();
-                let ua_in_dict = ua_candidate && UA_COMMON_WORDS.binary_search(&ua_lower.as_str()).is_ok();
+                let ru_in_dict = ru_candidate && RU_COMMON_WORDS.binary_search(&ru.as_str()).is_ok();
+                let ua_in_dict = ua_candidate && UA_COMMON_WORDS.binary_search(&ua.as_str()).is_ok();
                 if ru_in_dict || ua_in_dict {
-                    let to_ru: Option<bool> = resolve_cyrillic_preference(
-                        &preferred_cyrillic,
-                        ru_candidate,
-                        &ua_lower,
+                    let to_ru = resolve_cyrillic_preference(
+                        &config.preferred_cyrillic, ru_candidate, &ua,
                         || {
-                            if ru_in_dict && !ua_in_dict {
-                                true
-                            } else if ua_in_dict && !ru_in_dict {
-                                false
-                            } else {
-                                let score_ru = bigrams::score_ru(&ru_lower);
-                                let score_ua = bigrams::score_ua(&ua_lower);
-                                let required_delta = if has_ua_markers(&ua_lower) {
-                                    RU_UA_SCORE_MIN_DELTA
-                                } else {
-                                    RU_UA_SCORE_STRONG_DELTA
-                                };
-                                score_ua - score_ru < required_delta
+                            if ru_in_dict && !ua_in_dict { true }
+                            else if ua_in_dict && !ru_in_dict { false }
+                            else {
+                                let d = if has_ua_markers(&ua) { RU_UA_SCORE_MIN_DELTA } else { RU_UA_SCORE_STRONG_DELTA };
+                                score_ua - score_ru < d
                             }
                         },
                     );
                     match to_ru {
-                        Some(true) => {
-                            let new_word = apply_case_correction(&self.entries, &ru);
-                            return Some(SwitchAction {
-                                backspaces,
-                                new_word,
-                                target_lang: layout::LANG_RU,
-                                original_word: en,
-                            });
-                        }
-                        Some(false) => {
-                            let new_word = apply_case_correction(&self.entries, &ua);
-                            return Some(SwitchAction {
-                                backspaces,
-                                new_word,
-                                target_lang: layout::LANG_UA,
-                                original_word: en,
-                            });
-                        }
-                        None => return None,
+                        Some(true)  => sw!(SwitchAction { backspaces, new_word: apply_case_correction(&self.entries, &ru), target_lang: layout::LANG_RU, original_word: en }),
+                        Some(false) => sw!(SwitchAction { backspaces, new_word: apply_case_correction(&self.entries, &ua), target_lang: layout::LANG_UA, original_word: en }),
+                        None => skip!(),
                     }
                 }
             }
 
-            let score_ru = if ru_candidate { bigrams::score_ru(&ru_lower) } else { f32::NEG_INFINITY };
-            let score_ua = if ua_candidate { bigrams::score_ua(&ua_lower) } else { f32::NEG_INFINITY };
-
-            let ru_diff = score_ru - score_en;
-            let ua_diff = score_ua - score_en;
-
-            let ru_threshold = base_threshold * if has_ru_markers(&ru_lower) {
+            let score_ru_eff = if ru_candidate { score_ru } else { f32::NEG_INFINITY };
+            let score_ua_eff = if ua_candidate { score_ua } else { f32::NEG_INFINITY };
+            let ru_diff = score_ru_eff - score_en;
+            let ua_diff = score_ua_eff - score_en;
+            let ru_thr = base_threshold * if has_ru_markers(&ru) {
+                if on_the_fly { 1.3 } else { 0.7 }
+            } else {
+                if on_the_fly { 2.5 } else { 1.0 }
+            };
+            let ua_thr = base_threshold * if has_ua_markers(&ua) {
                 if on_the_fly { 1.3 } else { 0.7 }
             } else {
                 if on_the_fly { 2.5 } else { 1.0 }
             };
 
-            let ua_threshold = base_threshold * if has_ua_markers(&ua_lower) {
-                if on_the_fly { 1.3 } else { 0.7 }
-            } else {
-                if on_the_fly { 2.5 } else { 1.0 }
-            };
-
-            let ru_switches = ru_diff > ru_threshold;
-            let ua_switches = ua_diff > ua_threshold;
-
-            if ru_switches || ua_switches {
-                let ru_in_dict = RU_COMMON_WORDS.binary_search(&ru_lower.as_str()).is_ok();
-                let ua_in_dict = UA_COMMON_WORDS.binary_search(&ua_lower.as_str()).is_ok();
-
-                let to_ru: Option<bool> = resolve_cyrillic_preference(
-                    &preferred_cyrillic,
-                    ru_candidate,
-                    &ua_lower,
+            if ru_diff > ru_thr || ua_diff > ua_thr {
+                let ru_in_dict = RU_COMMON_WORDS.binary_search(&ru.as_str()).is_ok();
+                let ua_in_dict = UA_COMMON_WORDS.binary_search(&ua.as_str()).is_ok();
+                let to_ru = resolve_cyrillic_preference(
+                    &config.preferred_cyrillic, ru_candidate, &ua,
                     || {
-                        if ru_in_dict && !ua_in_dict {
-                            true
-                        } else if ua_in_dict && !ru_in_dict {
-                            false
-                        } else {
-                            // Both or neither in dict: bigram delta with marker penalty.
-                            let required_delta = if has_ua_markers(&ua_lower) {
-                                RU_UA_SCORE_MIN_DELTA
-                            } else {
-                                RU_UA_SCORE_STRONG_DELTA
-                            };
-                            if ru_candidate {
-                                score_ua - score_ru < required_delta
-                            } else {
-                                false
-                            }
+                        if ru_in_dict && !ua_in_dict { true }
+                        else if ua_in_dict && !ru_in_dict { false }
+                        else {
+                            let d = if has_ua_markers(&ua) { RU_UA_SCORE_MIN_DELTA } else { RU_UA_SCORE_STRONG_DELTA };
+                            if ru_candidate { score_ua_eff - score_ru_eff < d } else { false }
                         }
                     },
                 );
-
                 if to_ru == Some(true) {
-                    let new_word = apply_case_correction(&self.entries, &ru);
-                    return Some(SwitchAction {
-                        backspaces,
-                        new_word,
-                        target_lang: layout::LANG_RU,
-                        original_word: en,
-                    });
+                    sw!(SwitchAction { backspaces, new_word: apply_case_correction(&self.entries, &ru), target_lang: layout::LANG_RU, original_word: en });
                 } else if to_ru == Some(false) {
-                    let new_word = apply_case_correction(&self.entries, &ua);
-                    return Some(SwitchAction {
-                        backspaces,
-                        new_word,
-                        target_lang: layout::LANG_UA,
-                        original_word: en,
-                    });
+                    sw!(SwitchAction { backspaces, new_word: apply_case_correction(&self.entries, &ua), target_lang: layout::LANG_UA, original_word: en });
                 }
-                // to_ru == None: both candidates blocked by preference → no switch
             }
         }
 
-        None
+        (None, Some(snap))
     }
 }
 
@@ -927,24 +794,38 @@ fn has_ru_markers(word: &str) -> bool {
     word.chars().any(|c| matches!(c, 'ы' | 'Ы' | 'э' | 'Э' | 'ъ' | 'Ъ' | 'ё' | 'Ё'))
 }
 
+/// Apply case correction to a lowercase `word` based on how the original keys
+/// were typed (capitalisation stored in `original_entries`).
+///
+/// Three patterns are handled:
+/// * ALL_CAPS  — every key held Shift/Caps → output ALL_CAPS
+/// * Inversion — first key lower, rest upper (Caps Lock was on, then turned off)
+///               → output Title case  e.g. "gHBDTN" → "Привет"
+/// * Default   — return the word unchanged (already lowercase)
 fn apply_case_correction(original_entries: &[Entry], word: &str) -> String {
-    if original_entries.len() >= 3
-        && !original_entries[0].is_upper
-        && original_entries[1..].iter().all(|e| e.is_upper)
-    {
-        let mut chars = word.chars();
-        if let Some(first) = chars.next() {
-            let mut result = first.to_uppercase().to_string();
-            for c in chars {
-                result.push_str(&c.to_lowercase().to_string());
-            }
-            result
-        } else {
-            word.to_string()
-        }
-    } else {
-        word.to_string()
+    if original_entries.is_empty() {
+        return word.to_string();
     }
+    // CapsLock inversion: first key was lowered by Shift (shift XOR caps = false),
+    // rest uppercase from CapsLock alone. User intended sentence-case.
+    let inversion = original_entries.len() >= 3
+        && !original_entries[0].is_upper
+        && original_entries[1..].iter().all(|e| e.is_upper);
+    if inversion {
+        let mut chars = word.chars();
+        let first = chars.next()
+            .map(|c| c.to_uppercase().to_string())
+            .unwrap_or_default();
+        let rest: String = chars.flat_map(|c| c.to_lowercase()).collect();
+        return first + &rest;
+    }
+    // General case: apply per-character case directly from entries.
+    // Handles ALL_CAPS, Sentence case, camelCase, and all-lower uniformly.
+    // `word` is always lowercase on entry; entries supply the intended case.
+    word.chars()
+        .zip(original_entries.iter())
+        .map(|(c, e)| if e.is_upper { c.to_uppercase().next().unwrap_or(c) } else { c })
+        .collect()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1124,12 +1005,14 @@ mod tests {
     fn single_letter_words_switch() {
         let mut buf = WordBuffer::new();
 
-        // EN→Cyrillic single-char switching is disabled: 'd' (→ RU 'в') must NOT switch.
+        // EN→Cyrillic single-char switching: 'd' (→ RU 'в') must switch to RU 'в'.
         buf.push(0x44, false); // 'd'
-        assert!(buf.detect_mismatch(LANG_EN).is_none(), "single 'd' in EN layout must not switch");
+        let action = buf.detect_mismatch(LANG_EN).expect("single 'd' in EN layout should switch to RU 'в'");
+        assert_eq!(action.target_lang, LANG_RU);
+        assert_eq!(action.new_word, "в");
         buf.clear();
 
-        // 'a' is in common_en_single — also must not switch from EN layout.
+        // 'a' is in common_en_single — must not switch from EN layout.
         buf.push(0x41, false); // 'a'
         assert!(buf.detect_mismatch(LANG_EN).is_none());
         buf.clear();
@@ -1154,6 +1037,24 @@ mod tests {
         let action = buf.detect_mismatch(LANG_RU).expect("should switch 'сдш' -> 'cli'");
         assert_eq!(action.target_lang, LANG_EN);
         assert_eq!(action.new_word, "cli");
+        buf.clear();
+
+        // Test the new vpn short abbreviation
+        buf.push(0x56, false); // 'v' -> 'м'
+        buf.push(0x50, false); // 'p' -> 'з'
+        buf.push(0x4E, false); // 'n' -> 'т'
+        let action = buf.detect_mismatch(LANG_RU).expect("should switch 'мзт' -> 'vpn'");
+        assert_eq!(action.target_lang, LANG_EN);
+        assert_eq!(action.new_word, "vpn");
+        buf.clear();
+
+        // Test the new мин short word
+        buf.push(0x56, false); // 'v' -> 'м'
+        buf.push(0x42, false); // 'b' -> 'и'
+        buf.push(0x59, false); // 'y' -> 'н'
+        let action = buf.detect_mismatch(LANG_EN).expect("should switch 'vby' -> 'мин'");
+        assert_eq!(action.target_lang, LANG_RU);
+        assert_eq!(action.new_word, "мин");
         buf.clear();
     }
 
@@ -1383,5 +1284,58 @@ mod tests {
         assert_eq!(action.target_lang, LANG_UA);
         assert_eq!(action.backspaces, 4);
         assert_eq!(action.new_word, "існув");
+    }
+
+    // ── Context-aware detection ───────────────────────────────────────────────
+
+    #[test]
+    fn sentence_case_preserved_on_switch() {
+        // Bug regression: "Привет" typed in EN layout should switch to RU and
+        // preserve the capital first letter.
+        let mut buf = WordBuffer::new();
+        // VK for G=0x47, H=0x48, B=0x42, D=0x44, T=0x54, N=0x4E
+        // In EN layout: gHBDTN → гРИВЕТ (wrong) — but with is_upper on first, should be "Привет"
+        buf.push(0x47, true);  // G (upper) → 'П' in RU
+        buf.push(0x48, false); // H (lower) → 'р'
+        buf.push(0x42, false); // B (lower) → 'и'
+        buf.push(0x44, false); // D (lower) → 'в'
+        buf.push(0x54, false); // T (lower) → 'е'
+        buf.push(0x4E, false); // N (lower) → 'т'
+        let action = buf.detect_mismatch(LANG_EN).expect("should switch to RU");
+        assert_eq!(action.target_lang, LANG_RU);
+        assert_eq!(action.new_word, "Привет", "first letter must remain capitalised");
+    }
+
+    #[test]
+    fn context_suppresses_short_dict_switch() {
+        // When Cyrillic context is dominant, short EN words (≤4) from the
+        // dictionary should not trigger an automatic switch — they fall through
+        // to the bigram model, which correctly skips them.
+        let config = DetectionConfig {
+            context_lang: Some(LANG_RU),
+            ..DetectionConfig::default()
+        };
+        let mut buf = WordBuffer::new();
+        // "ctrl" in RU layout → "секд"; step 1b would normally switch to EN,
+        // but context=RU must suppress the dict switch.
+        push_en_chars(&mut buf, "ctrl");
+        let (action, _) = buf.detect_with_snapshot(LANG_RU, 1.0, &config);
+        assert!(action.is_none(), "context=RU must suppress dict switch for 'ctrl'");
+    }
+
+    #[test]
+    fn context_does_not_suppress_long_words() {
+        // Context suppression only applies to ≤4 char words.
+        // A long clearly-English word must still switch even with Cyrillic context.
+        let config = DetectionConfig {
+            context_lang: Some(LANG_RU),
+            ..DetectionConfig::default()
+        };
+        let mut buf = WordBuffer::new();
+        // "function" in RU layout → "aeyrwbzy"; strongly EN bigrams.
+        push_en_chars(&mut buf, "function");
+        let (action, _) = buf.detect_with_snapshot(LANG_RU, 1.0, &config);
+        assert!(action.is_some(), "long EN word must still switch despite Cyrillic context");
+        assert_eq!(action.unwrap().target_lang, LANG_EN);
     }
 }

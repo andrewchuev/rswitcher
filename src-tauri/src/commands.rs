@@ -39,11 +39,21 @@ pub fn save_settings(settings: Settings) -> Settings {
     s.hotkey_enabled = settings.hotkey_enabled;
     s.hotkey_vk = settings.hotkey_vk;
     s.hotkey_win = settings.hotkey_win;
+    s.hotkey_ctrl = settings.hotkey_ctrl;
+    s.hotkey_shift = settings.hotkey_shift;
+    s.hotkey_alt = settings.hotkey_alt;
     s.undo_hotkey_enabled = settings.undo_hotkey_enabled;
     s.undo_hotkey_vk = settings.undo_hotkey_vk;
     s.undo_hotkey_win = settings.undo_hotkey_win;
+    s.undo_hotkey_ctrl = settings.undo_hotkey_ctrl;
+    s.undo_hotkey_shift = settings.undo_hotkey_shift;
+    s.undo_hotkey_alt = settings.undo_hotkey_alt;
     s.lang = settings.lang;
     s.sensitivity = settings.sensitivity;
+    // Drop adaptive_counts entries for words that are now explicitly whitelisted.
+    for word in settings.ignored_words.iter() {
+        s.adaptive_counts.remove(word.as_str());
+    }
     s.ignored_words = settings.ignored_words;
     s.use_selection_replace = settings.use_selection_replace;
     s.preferred_cyrillic = settings.preferred_cyrillic;

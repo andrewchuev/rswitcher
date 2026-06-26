@@ -7,6 +7,9 @@ let runningApps = [];
 let currentLang = 'en';
 let recordingTarget = null; // null | 'hotkey' | 'undo_hotkey'
 let winActive = false;
+let ctrlActive = false;
+let shiftActive = false;
+let altActive = false;
 let recOrigText = '';
 let pollId = null;
 
@@ -52,7 +55,7 @@ const T = {
     hotkeysTitle: 'Hotkeys',
     hotkeyForceLabel: 'Force switch', hotkeyForceDesc: 'Re-type word in the other layout',
     hotkeyUndoLabel: 'Undo last switch', hotkeyUndoDesc: 'Restore original word and layout',
-    hotkeysHint: 'Click a key combination to change it. Only the Win modifier is supported.',
+    hotkeysHint: 'Click a key combination to change it. Multiple modifiers (Ctrl, Alt, Shift, Win) are supported.',
     wordsTitle: 'Ignored words', wordsPlaceholder: 'type a word…', wordsEmpty: 'whitelist is empty',
     addButton: 'Add', clearAllButton: 'Clear all',
     appsTitle: 'App exclusions', appsPlaceholder: 'app.exe', appsEmpty: 'no exclusions',
@@ -79,7 +82,7 @@ const T = {
     hotkeysTitle: 'Горячие клавиши',
     hotkeyForceLabel: 'Принудительное переключение', hotkeyForceDesc: 'Перепечатать слово в другой раскладке',
     hotkeyUndoLabel: 'Отменить переключение', hotkeyUndoDesc: 'Восстановить слово и раскладку',
-    hotkeysHint: 'Нажмите на комбинацию клавиш, чтобы изменить её. Поддерживается только модификатор Win.',
+    hotkeysHint: 'Нажмите на комбинацию клавиш, чтобы изменить её. Поддерживаются комбинации с Ctrl, Alt, Shift и Win.',
     wordsTitle: 'Исключённые слова', wordsPlaceholder: 'введите слово…', wordsEmpty: 'список пуст',
     addButton: 'Добавить', clearAllButton: 'Очистить',
     appsTitle: 'Исключения приложений', appsPlaceholder: 'app.exe', appsEmpty: 'нет исключений',
@@ -106,7 +109,7 @@ const T = {
     hotkeysTitle: 'Гарячі клавіші',
     hotkeyForceLabel: 'Примусове перемикання', hotkeyForceDesc: 'Передрукувати слово в іншій розкладці',
     hotkeyUndoLabel: 'Скасувати перемикання', hotkeyUndoDesc: 'Відновити слово і розкладку',
-    hotkeysHint: 'Натисніть комбінацію клавіш, щоб змінити її. Підтримується лише модифікатор Win.',
+    hotkeysHint: 'Натисніть комбінацію клавіш, щоб змінити її. Підтримуються комбінації з Ctrl, Alt, Shift та Win.',
     wordsTitle: 'Виключені слова', wordsPlaceholder: 'введіть слово…', wordsEmpty: 'список порожній',
     addButton: 'Додати', clearAllButton: 'Очистити',
     appsTitle: 'Винятки додатків', appsPlaceholder: 'app.exe', appsEmpty: 'немає винятків',
@@ -122,7 +125,7 @@ const T = {
 };
 
 // ── VK display name ───────────────────────────────────────────────────────────
-function vkDisplayName(vk, win) {
+function vkDisplayName(vk, win = false, ctrl = false, shift = false, alt = false) {
   let base = '';
   if (vk >= 65 && vk <= 90) base = String.fromCharCode(vk);
   else if (vk >= 48 && vk <= 57) base = String.fromCharCode(vk);
@@ -132,6 +135,7 @@ function vkDisplayName(vk, win) {
     case 0x10: case 0xA0: case 0xA1: base = 'Shift'; break;
     case 0x11: case 0xA2: case 0xA3: base = 'Ctrl'; break;
     case 0x12: case 0xA4: case 0xA5: base = 'Alt'; break;
+    case 0x5B: case 0x5C: case 91: case 92: base = 'Win'; break;
     case 0x08: base = 'Backspace'; break;
     case 0x09: base = 'Tab'; break;
     case 0x0D: base = 'Enter'; break;
@@ -166,7 +170,20 @@ function vkDisplayName(vk, win) {
     case 222: base = "'"; break;
     default: base = '0x' + vk.toString(16).toUpperCase();
   }
-  return win ? 'Win+' + base : base;
+
+  const parts = [];
+  const isShift = (vk === 0x10 || vk === 0xA0 || vk === 0xA1);
+  const isCtrl  = (vk === 0x11 || vk === 0xA2 || vk === 0xA3);
+  const isAlt   = (vk === 0x12 || vk === 0xA4 || vk === 0xA5);
+  const isWin   = (vk === 0x5B || vk === 0x5C || vk === 91 || vk === 92);
+
+  if (ctrl && !isCtrl)   parts.push('Ctrl');
+  if (alt && !isAlt)     parts.push('Alt');
+  if (shift && !isShift) parts.push('Shift');
+  if (win && !isWin)     parts.push('Win');
+
+  parts.push(base);
+  return parts.join('+');
 }
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
@@ -253,8 +270,8 @@ function renderUI() {
   // Hotkeys
   hotkeyEnabled.checked = settings.hotkey_enabled;
   undoEnabled.checked   = settings.undo_hotkey_enabled;
-  if (recordingTarget !== 'hotkey')     hotkeyKbd.textContent = vkDisplayName(settings.hotkey_vk, settings.hotkey_win);
-  if (recordingTarget !== 'undo_hotkey') undoKbd.textContent  = vkDisplayName(settings.undo_hotkey_vk, settings.undo_hotkey_win);
+  if (recordingTarget !== 'hotkey')     hotkeyKbd.textContent = vkDisplayName(settings.hotkey_vk, settings.hotkey_win, settings.hotkey_ctrl, settings.hotkey_shift, settings.hotkey_alt);
+  if (recordingTarget !== 'undo_hotkey') undoKbd.textContent  = vkDisplayName(settings.undo_hotkey_vk, settings.undo_hotkey_win, settings.undo_hotkey_ctrl, settings.undo_hotkey_shift, settings.undo_hotkey_alt);
   hotkeyKbd.classList.toggle('disabled', !settings.hotkey_enabled);
   undoKbd.classList.toggle('disabled',   !settings.undo_hotkey_enabled);
   if (!settings.hotkey_enabled     && recordingTarget === 'hotkey')     stopRecording(false);
@@ -324,6 +341,22 @@ function renderRunningApps() {
 }
 
 // ── Hotkey recording ──────────────────────────────────────────────────────────
+function isModifierKey(keyCode) {
+  return keyCode === 16 || keyCode === 17 || keyCode === 18 || keyCode === 91 || keyCode === 92;
+}
+
+function getModifiersDisplayString(win, ctrl, shift, alt) {
+  let parts = [];
+  if (ctrl) parts.push('Ctrl');
+  if (alt) parts.push('Alt');
+  if (shift) parts.push('Shift');
+  if (win) parts.push('Win');
+  if (parts.length === 0) {
+    return (T[currentLang] || T.en).pressKeys;
+  }
+  return parts.join(' + ') + ' + …';
+}
+
 function startRecording(target, el) {
   if (recordingTarget) stopRecording(false);
   if (!settings) return;
@@ -332,6 +365,9 @@ function startRecording(target, el) {
   recordingTarget = target;
   recOrigText = el.textContent;
   winActive = false;
+  ctrlActive = false;
+  shiftActive = false;
+  altActive = false;
   el.classList.add('recording');
   el.textContent = (T[currentLang] || T.en).pressKeys;
   window.addEventListener('keydown', onKeyDown, true);
@@ -340,7 +376,7 @@ function startRecording(target, el) {
   document.addEventListener('click', onClickOut, true);
 }
 
-function stopRecording(save, vk = 0, win = false) {
+function stopRecording(save, vk = 0, win = false, ctrl = false, shift = false, alt = false) {
   if (!recordingTarget) return;
   const el = recordingTarget === 'hotkey' ? hotkeyKbd : undoKbd;
   window.removeEventListener('keydown', onKeyDown, true);
@@ -349,8 +385,19 @@ function stopRecording(save, vk = 0, win = false) {
   document.removeEventListener('click', onClickOut, true);
   el.classList.remove('recording');
   if (save) {
-    if (recordingTarget === 'hotkey') { settings.hotkey_vk = vk;     settings.hotkey_win = win; }
-    else                              { settings.undo_hotkey_vk = vk; settings.undo_hotkey_win = win; }
+    if (recordingTarget === 'hotkey') {
+      settings.hotkey_vk = vk;
+      settings.hotkey_win = win;
+      settings.hotkey_ctrl = ctrl;
+      settings.hotkey_shift = shift;
+      settings.hotkey_alt = alt;
+    } else {
+      settings.undo_hotkey_vk = vk;
+      settings.undo_hotkey_win = win;
+      settings.undo_hotkey_ctrl = ctrl;
+      settings.undo_hotkey_shift = shift;
+      settings.undo_hotkey_alt = alt;
+    }
     invoke('save_settings', { settings })
       .then(s => { if (s) settings = s; renderUI(); })
       .catch(console.error);
@@ -359,25 +406,54 @@ function stopRecording(save, vk = 0, win = false) {
   }
   recordingTarget = null;
   winActive = false;
+  ctrlActive = false;
+  shiftActive = false;
+  altActive = false;
 }
 
 function onKeyDown(e) {
   e.preventDefault(); e.stopPropagation();
   if (e.keyCode === 27) { stopRecording(false); return; }
+
+  // Track modifier keys
   if (e.keyCode === 91 || e.keyCode === 92) {
     winActive = true;
-    const el = recordingTarget === 'hotkey' ? hotkeyKbd : undoKbd;
-    el.textContent = 'Win + …';
+  } else if (e.keyCode === 17) {
+    ctrlActive = true;
+  } else if (e.keyCode === 16) {
+    shiftActive = true;
+  } else if (e.keyCode === 18) {
+    altActive = true;
+  }
+
+  const el = recordingTarget === 'hotkey' ? hotkeyKbd : undoKbd;
+
+  if (isModifierKey(e.keyCode)) {
+    el.textContent = getModifiersDisplayString(winActive, ctrlActive, shiftActive, altActive);
     return;
   }
-  stopRecording(true, e.keyCode, winActive || e.metaKey);
+
+  stopRecording(true, e.keyCode, winActive, ctrlActive, shiftActive, altActive);
 }
 
 function onKeyUp(e) {
+  e.preventDefault(); e.stopPropagation();
+  
+  const wasModifier = isModifierKey(e.keyCode);
+
+  // Track modifier releases
   if (e.keyCode === 91 || e.keyCode === 92) {
     winActive = false;
-    const el = recordingTarget === 'hotkey' ? hotkeyKbd : undoKbd;
-    if (el) el.textContent = (T[currentLang] || T.en).pressKeys;
+  } else if (e.keyCode === 17) {
+    ctrlActive = false;
+  } else if (e.keyCode === 16) {
+    shiftActive = false;
+  } else if (e.keyCode === 18) {
+    altActive = false;
+  }
+
+  if (wasModifier) {
+    stopRecording(true, e.keyCode, winActive, ctrlActive, shiftActive, altActive);
   }
 }
 

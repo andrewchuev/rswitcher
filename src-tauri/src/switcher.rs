@@ -8,6 +8,7 @@ use windows::Win32::{
             INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
             KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
             VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_LWIN, VK_RWIN, VK_SHIFT, VK_LEFT,
+            VK_LCONTROL, VK_RCONTROL, VK_LSHIFT, VK_RSHIFT, VK_LMENU, VK_RMENU,
         },
         WindowsAndMessaging::{
             GetForegroundWindow, PostMessageW, WM_INPUTLANGCHANGEREQUEST,
@@ -41,23 +42,37 @@ pub fn perform_switch(action: &SwitchAction, boundary_vk: Option<VIRTUAL_KEY>) {
 
     let mut inputs: Vec<INPUT> = Vec::new();
 
-    // ── 0. Release Win key if held ────────────────────────────────────────────
-    // When the force/undo hotkey uses Win as a modifier, the Win key is
-    // physically held while we send backspaces.  Windows delivers injected
-    // keys as WM_SYSKEYDOWN when Win is down, so apps see Win+Backspace
-    // instead of plain Backspace and ignore it as a text-edit key.
-    // Fix: inject VK_E8 (suppresses Start Menu) then release both Win keys
-    // before the backspaces, all in the same atomic SendInput batch.
-    unsafe {
-        let lwin = GetKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0;
-        let rwin = GetKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0;
-        if lwin || rwin {
-            inputs.push(make_vk(VIRTUAL_KEY(0xE8), KEYBD_EVENT_FLAGS(0)));
-            inputs.push(make_vk(VIRTUAL_KEY(0xE8), KEYEVENTF_KEYUP));
-            if lwin { inputs.push(make_vk(VK_LWIN, KEYEVENTF_KEYUP)); }
-            if rwin { inputs.push(make_vk(VK_RWIN, KEYEVENTF_KEYUP)); }
-        }
+    // ── 0. Release modifiers if held ──────────────────────────────────────────
+    // When a force/undo hotkey is physically held while we send backspaces,
+    // Windows delivers injected keys with those modifiers active. E.g. Ctrl
+    // held down causes Backspaces to be seen as Ctrl+Backspace, deleting
+    // whole words instead of characters.
+    // Fix: temporarily release Win, Ctrl, Shift, Alt, and restore them at the end.
+    let (lwin, rwin, lctrl, rctrl, lshift, rshift, lalt, ralt) = unsafe {
+        (
+            GetKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0,
+            GetKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0,
+            GetKeyState(VK_LCONTROL.0 as i32) as u16 & 0x8000 != 0,
+            GetKeyState(VK_RCONTROL.0 as i32) as u16 & 0x8000 != 0,
+            GetKeyState(VK_LSHIFT.0 as i32) as u16 & 0x8000 != 0,
+            GetKeyState(VK_RSHIFT.0 as i32) as u16 & 0x8000 != 0,
+            GetKeyState(VK_LMENU.0 as i32) as u16 & 0x8000 != 0,
+            GetKeyState(VK_RMENU.0 as i32) as u16 & 0x8000 != 0,
+        )
+    };
+
+    if lwin || rwin {
+        inputs.push(make_vk(VIRTUAL_KEY(0xE8), KEYBD_EVENT_FLAGS(0)));
+        inputs.push(make_vk(VIRTUAL_KEY(0xE8), KEYEVENTF_KEYUP));
+        if lwin { inputs.push(make_vk(VK_LWIN, KEYEVENTF_KEYUP)); }
+        if rwin { inputs.push(make_vk(VK_RWIN, KEYEVENTF_KEYUP)); }
     }
+    if lctrl { inputs.push(make_vk(VK_LCONTROL, KEYEVENTF_KEYUP)); }
+    if rctrl { inputs.push(make_vk(VK_RCONTROL, KEYEVENTF_KEYUP)); }
+    if lshift { inputs.push(make_vk(VK_LSHIFT, KEYEVENTF_KEYUP)); }
+    if rshift { inputs.push(make_vk(VK_RSHIFT, KEYEVENTF_KEYUP)); }
+    if lalt { inputs.push(make_vk(VK_LMENU, KEYEVENTF_KEYUP)); }
+    if ralt { inputs.push(make_vk(VK_RMENU, KEYEVENTF_KEYUP)); }
 
     // ── 1. Erase ─────────────────────────────────────────────────────────────
     if action.backspaces > 0 {
@@ -95,6 +110,16 @@ pub fn perform_switch(action: &SwitchAction, boundary_vk: Option<VIRTUAL_KEY>) {
         inputs.push(make_vk(vk, KEYBD_EVENT_FLAGS(0)));
         inputs.push(make_vk(vk, KEYEVENTF_KEYUP));
     }
+
+    // ── 4. Restore modifiers ──────────────────────────────────────────────────
+    if lalt { inputs.push(make_vk(VK_LMENU, KEYBD_EVENT_FLAGS(0))); }
+    if ralt { inputs.push(make_vk(VK_RMENU, KEYBD_EVENT_FLAGS(0))); }
+    if lshift { inputs.push(make_vk(VK_LSHIFT, KEYBD_EVENT_FLAGS(0))); }
+    if rshift { inputs.push(make_vk(VK_RSHIFT, KEYBD_EVENT_FLAGS(0))); }
+    if lctrl { inputs.push(make_vk(VK_LCONTROL, KEYBD_EVENT_FLAGS(0))); }
+    if rctrl { inputs.push(make_vk(VK_RCONTROL, KEYBD_EVENT_FLAGS(0))); }
+    if lwin { inputs.push(make_vk(VK_LWIN, KEYBD_EVENT_FLAGS(0))); }
+    if rwin { inputs.push(make_vk(VK_RWIN, KEYBD_EVENT_FLAGS(0))); }
 
     unsafe {
         // Deliver all events in a single call; Windows preserves ordering.

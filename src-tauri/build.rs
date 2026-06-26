@@ -67,7 +67,7 @@ fn generate_language_models() {
     // almost absent from general-text corpora, letting Cyrillic scores win.
     for w in &[
         "bulk", "docx", "jpeg", "jira", "jest", "json", "jwt",
-        "pptx", "xlsx",
+        "pptx", "xlsx", "fluxcd", "hetzner",
     ] {
         if !en_words.contains(&w.to_string()) {
             en_words.push(w.to_string());

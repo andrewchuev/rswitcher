@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{mpsc, Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,12 @@ pub struct Settings {
     /// Require Win modifier for the force-switch hotkey.
     #[serde(default)]
     pub hotkey_win: bool,
+    #[serde(default)]
+    pub hotkey_ctrl: bool,
+    #[serde(default)]
+    pub hotkey_shift: bool,
+    #[serde(default)]
+    pub hotkey_alt: bool,
 
     /// Hotkey to undo the last automatic switch and restore the original word.
     /// Default: Win+Backspace (0x08 = VK_BACK, undo_hotkey_win = true).
@@ -46,6 +52,12 @@ pub struct Settings {
     /// Require Win modifier for the undo hotkey.
     #[serde(default)]
     pub undo_hotkey_win: bool,
+    #[serde(default)]
+    pub undo_hotkey_ctrl: bool,
+    #[serde(default)]
+    pub undo_hotkey_shift: bool,
+    #[serde(default)]
+    pub undo_hotkey_alt: bool,
     #[serde(default = "default_lang")]
     pub lang: String,
     
@@ -53,7 +65,7 @@ pub struct Settings {
     pub sensitivity: f32,
 
     #[serde(default)]
-    pub ignored_words: Vec<String>,
+    pub ignored_words: HashSet<String>,
 
     #[serde(default = "default_use_selection_replace")]
     pub use_selection_replace: bool,
@@ -96,12 +108,18 @@ impl Default for Settings {
             hotkey_enabled: false,
             hotkey_vk: 0x10,   // VK_SHIFT
             hotkey_win: true,
+            hotkey_ctrl: false,
+            hotkey_shift: false,
+            hotkey_alt: false,
             undo_hotkey_enabled: false,
             undo_hotkey_vk: 0x08, // VK_BACK
             undo_hotkey_win: true,
+            undo_hotkey_ctrl: false,
+            undo_hotkey_shift: false,
+            undo_hotkey_alt: false,
             lang: "en".to_string(),
             sensitivity: 1.0,
-            ignored_words: Vec::new(),
+            ignored_words: HashSet::new(),
             use_selection_replace: false,
             window_x: None,
             window_y: None,

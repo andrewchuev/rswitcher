@@ -9,10 +9,10 @@ Automatically detects when text is typed in the wrong keyboard layout (EN↔RU�
 ## Features
 
 - **Auto-switching** — detects mismatched layout at word boundaries (Space / Enter / Tab) and on non-translatable keys using a bigram+trigram statistical language model (EN↔RU↔UA).
-- **On-the-fly detection** — mid-word switching fires as soon as 5+ characters are buffered, before the word boundary is reached, catching mismatches earlier.
+- **On-the-fly detection** — mid-word switching fires as soon as 5+ characters are buffered. For longer words (8+ characters), the layout recognition threshold is dynamically relaxed to auto-switch them mid-word more reliably.
 - **Cross-Cyrillic switching** — detects RU↔UA mismatches in addition to Cyrillic↔Latin, using UA-specific letter markers (і / ї / є / ґ) and bigram score deltas to disambiguate.
 - **Dictionary Guard** — compile-time generated sorted lists of the top common words in English (3 000), Russian (5 000), and Ukrainian (3 000) for length ≥ 4. Correctly typed common words are immune to layout switching, eliminating false-positive switches.
-- **Short-word dictionary** — dedicated 2–3 character dictionaries (`COMMON_EN_SHORT`, `COMMON_RU_SHORT`, `COMMON_UA_SHORT`) cover short words that bigrams cannot score reliably.
+- **Short-word dictionary** — dedicated 2–3 character dictionaries (including terms like `usb`, `box`, `ok`, `wc`, `git`, `тв`, `чер`) cover short words that bigrams cannot score reliably.
 - **User-confirmed corrections** (`word_corrections`) — force-switching a word records its EN key sequence → target language as a permanent correction. Subsequent occurrences of that sequence are switched instantly without consulting the statistical model.
 - **Adaptive whitelisting** — words typed 3 times in a row without triggering a switch are automatically added to `ignored_words`. Counts are persisted in `adaptive_counts` across restarts so the threshold accumulates over time.
 - **Undo Feedback Whitelist** — pressing the Undo hotkey immediately after an automatic switch restores the original word and adds it to `ignored_words` so it is never switched again.

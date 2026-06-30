@@ -18,6 +18,7 @@ const masterSwitch    = document.getElementById('master-switch');
 const autostartToggle = document.getElementById('autostart-toggle');
 const langSelect      = document.getElementById('lang-select');
 const openConfigBtn   = document.getElementById('open-config-btn');
+const devLink         = document.getElementById('dev-link');
 const hotkeyEnabled   = document.getElementById('hotkey-enabled');
 const hotkeyKbd       = document.getElementById('hotkey-kbd');
 const undoEnabled     = document.getElementById('undo-enabled');
@@ -45,6 +46,7 @@ const T = {
     title: 'RSwitcher — Settings',
     tabDetection: 'Detection', tabHotkeys: 'Hotkeys',
     tabWords: 'Ignored words', tabApps: 'App exclusions', tabSystem: 'System',
+    tabAbout: 'About',
     detectionTitle: 'Language detection',
     sensitivityLabel: 'Sensitivity', sensitivityDesc: 'How aggressively words are detected',
     sensitivityLow: 'Low', sensitivityMedium: 'Medium', sensitivityHigh: 'High',
@@ -67,11 +69,13 @@ const T = {
     adminOkText: 'Running as administrator', restartAdminBtn: 'Restart as admin',
     savedNote: 'Saved automatically', themeLight: 'Light', themeDark: 'Dark',
     pressKeys: 'Press keys…',
+    aboutTitle: 'About RSwitcher', aboutVersionLabel: 'Version', aboutDeveloperLabel: 'Developer',
   },
   ru: {
     title: 'RSwitcher — Настройки',
     tabDetection: 'Детекция', tabHotkeys: 'Хоткеи',
     tabWords: 'Игнор. слова', tabApps: 'Исключения', tabSystem: 'Система',
+    tabAbout: 'О программе',
     detectionTitle: 'Определение языка',
     sensitivityLabel: 'Чувствительность', sensitivityDesc: 'Агрессивность автопереключения',
     sensitivityLow: 'Низкая', sensitivityMedium: 'Средняя', sensitivityHigh: 'Высокая',
@@ -94,11 +98,13 @@ const T = {
     adminOkText: 'Запущено как администратор', restartAdminBtn: 'Запуск от имени Админа',
     savedNote: 'Настройки сохраняются автоматически',
     themeLight: 'Светлая', themeDark: 'Тёмная', pressKeys: 'Нажмите клавиши…',
+    aboutTitle: 'О программе RSwitcher', aboutVersionLabel: 'Версия', aboutDeveloperLabel: 'Разработчик',
   },
   uk: {
     title: 'RSwitcher — Налаштування',
     tabDetection: 'Детекція', tabHotkeys: 'Гарячі клав.',
     tabWords: 'Ігнор. слова', tabApps: 'Винятки', tabSystem: 'Система',
+    tabAbout: 'Про програму',
     detectionTitle: 'Визначення мови',
     sensitivityLabel: 'Чутливість', sensitivityDesc: 'Агресивність автоперемикання',
     sensitivityLow: 'Низька', sensitivityMedium: 'Середня', sensitivityHigh: 'Висока',
@@ -121,6 +127,7 @@ const T = {
     adminOkText: 'Запущено з правами адміністратора', restartAdminBtn: 'Запустити як Адмін',
     savedNote: 'Налаштування зберігаються автоматично',
     themeLight: 'Світла', themeDark: 'Темна', pressKeys: 'Натисніть клавіші…',
+    aboutTitle: 'Про програму RSwitcher', aboutVersionLabel: 'Версія', aboutDeveloperLabel: 'Розробник',
   },
 };
 
@@ -483,6 +490,9 @@ async function loadAllData() {
     adminStatus.style.display = elevated ? 'none' : 'flex';
     adminOk.style.display     = elevated ? 'flex' : 'none';
 
+    const version = await invoke('get_app_version');
+    document.getElementById('about-version-val').textContent = version;
+
     applyTranslations();
     renderUI();
     renderRunningApps();
@@ -560,6 +570,11 @@ langSelect.addEventListener('change', async () => {
 
 openConfigBtn.addEventListener('click', async () => {
   try { await invoke('open_config_dir'); } catch (e) { console.error(e); }
+});
+
+devLink.addEventListener('click', async (e) => {
+  e.preventDefault();
+  try { await invoke('open_url', { url: 'https://reslab.pro' }); } catch (err) { console.error(err); }
 });
 
 hotkeyEnabled.addEventListener('change', async () => {

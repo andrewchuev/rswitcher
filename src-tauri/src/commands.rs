@@ -148,3 +148,14 @@ pub fn restart_as_admin() -> Result<(), String> {
     }
     std::process::exit(0);
 }
+
+#[tauri::command]
+pub fn open_url(app: tauri::AppHandle, url: String) {
+    use tauri_plugin_opener::OpenerExt;
+    let _ = app.opener().open_path(url, None::<&str>);
+}
+
+#[tauri::command]
+pub fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}

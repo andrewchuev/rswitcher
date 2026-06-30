@@ -52,6 +52,10 @@
           <i class="ti ti-settings-2"></i>
           <span data-i18n="tabSystem">System</span>
         </a>
+        <a class="nav-item" data-tab="about">
+          <i class="ti ti-info-circle"></i>
+          <span data-i18n="tabAbout">About</span>
+        </a>
       </nav>
 
       <div class="sidebar-footer">
@@ -200,6 +204,21 @@
               <span class="row-desc" data-i18n="configPath">%APPDATA%\rswitcher\config.json</span>
             </div>
             <button class="btn-ghost" id="open-config-btn" data-i18n="openConfigBtn">Open</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- About -->
+      <div class="tab-panel" id="panel-about">
+        <p class="panel-title" data-i18n="aboutTitle">About RSwitcher</p>
+        <div class="card">
+          <div class="card-row">
+            <span class="row-label" data-i18n="aboutVersionLabel">Version</span>
+            <span class="row-desc" id="about-version-val">0.1.4-alpha</span>
+          </div>
+          <div class="card-row">
+            <span class="row-label" data-i18n="aboutDeveloperLabel">Developer</span>
+            <a href="https://reslab.pro" target="_blank" class="link-primary" id="dev-link">Chuev Research</a>
           </div>
         </div>
       </div>

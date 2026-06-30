@@ -8,8 +8,8 @@ const COMMON_RU_SHORT: &[&str] = &[
     "их", "как", "кто", "ли", "мин", "мне", "мог", "мои", "моя", "мы", "на",
     "нам", "нас", "не", "ней", "нет", "них", "но", "об", "обо", "он", "она",
     "они", "оно", "от", "ото", "по", "под", "при", "про", "раз", "сам", "сих",
-    "со", "так", "там", "те", "тем", "тех", "тип", "то", "той", "том", "тот",
-    "три", "тут", "ты", "уж", "уже", "чем", "что", "это", "эту"
+    "со", "так", "там", "тв", "те", "тем", "тех", "тип", "то", "той", "том", "тот",
+    "три", "тут", "ты", "уж", "уже", "чем", "чер", "что", "это", "эту"
 ];
 
 const COMMON_UA_SHORT: &[&str] = &[
@@ -21,20 +21,20 @@ const COMMON_UA_SHORT: &[&str] = &[
 ];
 
 const COMMON_EN_SHORT: &[&str] = &[
-    "add", "am", "an", "and", "any", "api", "app", "are", "as", "at",
-    "aws", "bad", "bat", "be", "big", "bin", "but", "by", "can", "cd",
+    "add", "ali", "am", "an", "and", "any", "api", "app", "are", "as", "at",
+    "aws", "bad", "bat", "be", "big", "bin", "box", "but", "by", "can", "cd",
     "cfg", "cli", "cmd", "con", "crm", "css", "csv", "day", "db", "dev",
     "did", "dir", "dns", "do", "doc", "dom", "env", "err", "few", "flux",
-    "for", "ftp", "get", "git", "go", "had", "has", "he", "her", "him",
+    "for", "fpv", "ftp", "get", "git", "go", "had", "has", "he", "her", "him",
     "his", "how", "hub", "id", "if", "in", "io", "ip", "is", "it",
-    "its", "js", "key", "let", "lib", "log", "low", "ls", "mac", "mad",
-    "map", "may", "md", "me", "my", "net", "new", "no", "not", "now",
-    "npm", "of", "off", "old", "on", "one", "or", "org", "os", "our",
+    "its", "js", "key", "let", "lib", "lin", "log", "low", "ls", "mac", "mad",
+    "map", "may", "md", "me", "mr", "my", "net", "new", "no", "not", "now",
+    "npm", "of", "off", "ok", "old", "on", "one", "or", "org", "os", "our",
     "out", "own", "pdf", "pkg", "png", "pr", "py", "red", "rs", "run",
     "sad", "say", "see", "sh", "she", "so", "sql", "src", "ssh", "ssl",
     "sys", "tcp", "the", "tls", "too", "try", "ts", "two", "txt", "udp",
-    "ui", "up", "uri", "url", "use", "ux", "val", "vat", "vpn", "vps",
-    "was", "way", "we", "web", "who", "win", "wp", "wsl", "xml", "yes",
+    "ui", "up", "uri", "url", "usb", "use", "ux", "val", "vat", "vpn", "vps",
+    "was", "way", "wc", "we", "web", "who", "win", "wp", "wsl", "xml", "yes",
     "you", "zip"
 ];
 
@@ -639,9 +639,9 @@ impl WordBuffer {
             if !ru_ok || !en_ok || !ru.chars().all(is_cyrillic_or_ua) { skip!(); }
             let score_ua_eff = if ua_ok && ua.chars().all(is_cyrillic_or_ua) { score_ua } else { f32::NEG_INFINITY };
             let en_thr = base_threshold * if has_ru_markers(&ru) {
-                if on_the_fly { 2.5 } else { 1.5 }
+                if on_the_fly { if len >= 8 { 1.5 } else { 2.5 } } else { 1.5 }
             } else {
-                if on_the_fly { 2.0 } else { 1.0 }
+                if on_the_fly { if len >= 8 { 1.2 } else { 2.0 } } else { 1.0 }
             };
             if score_en - score_ru > en_thr {
                 sw!(SwitchAction { backspaces, new_word: apply_case_correction(&self.entries, &en), target_lang: layout::LANG_EN_US, original_word: ru });
@@ -661,9 +661,9 @@ impl WordBuffer {
             if !ua_ok || !en_ok || !ua.chars().all(is_cyrillic_or_ua) { skip!(); }
             let score_ru_eff = if ru_ok && ru.chars().all(is_cyrillic_or_ua) { score_ru } else { f32::NEG_INFINITY };
             let en_thr = base_threshold * if has_ua_markers(&ua) {
-                if on_the_fly { 2.5 } else { 1.5 }
+                if on_the_fly { if len >= 8 { 1.5 } else { 2.5 } } else { 1.5 }
             } else {
-                if on_the_fly { 2.0 } else { 1.0 }
+                if on_the_fly { if len >= 8 { 1.2 } else { 2.0 } } else { 1.0 }
             };
             if score_en - score_ua > en_thr {
                 sw!(SwitchAction { backspaces, new_word: apply_case_correction(&self.entries, &en), target_lang: layout::LANG_EN_US, original_word: ua });
@@ -1284,6 +1284,25 @@ mod tests {
         assert_eq!(action.target_lang, LANG_UA);
         assert_eq!(action.backspaces, 4);
         assert_eq!(action.new_word, "існув");
+    }
+
+    #[test]
+    fn usb_short_word_boundary_switch() {
+        let mut buf = WordBuffer::new();
+        push_en_word(&mut buf, "usb");
+        let action = buf.detect_mismatch(LANG_RU).expect("should detect mismatch for usb");
+        assert_eq!(action.target_lang, LANG_EN);
+        assert_eq!(action.new_word.to_lowercase(), "usb");
+    }
+
+    #[test]
+    fn long_word_on_the_fly_switch() {
+        let mut buf = WordBuffer::new();
+        push_en_word(&mut buf, "bacvkspace");
+        let action = buf.detect_mismatch_on_the_fly(LANG_RU, 1.0).expect("should switch on-the-fly for long word with RU marker");
+        assert_eq!(action.target_lang, LANG_EN);
+        assert_eq!(action.backspaces, 9);
+        assert_eq!(action.new_word, "bacvkspace");
     }
 
     // ── Context-aware detection ───────────────────────────────────────────────

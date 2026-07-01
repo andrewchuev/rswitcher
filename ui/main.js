@@ -143,6 +143,7 @@ function vkDisplayName(vk, win = false, ctrl = false, shift = false, alt = false
     case 0x11: case 0xA2: case 0xA3: base = 'Ctrl'; break;
     case 0x12: case 0xA4: case 0xA5: base = 'Alt'; break;
     case 0x5B: case 0x5C: case 91: case 92: base = 'Win'; break;
+    case 0x03: base = 'Break'; break;
     case 0x08: base = 'Backspace'; break;
     case 0x09: base = 'Tab'; break;
     case 0x0D: base = 'Enter'; break;

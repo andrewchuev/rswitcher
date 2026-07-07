@@ -63,6 +63,18 @@ npx tauri build
 
 **Build dependencies**: Rust 1.80+ (MSVC toolchain), Node.js (for `npx tauri` CLI).
 
+### Code Quality
+
+The codebase is checked for compliance with Rust best practices and is completely free of compiler and Clippy warnings. Run validation checks with:
+
+```bash
+# Lint check (treating warnings as errors)
+cargo clippy --all-targets --all-features -- -D warnings
+
+# Run all unit tests
+cargo test
+```
+
 ---
 
 ## Usage

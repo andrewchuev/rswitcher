@@ -1,7 +1,4 @@
 # RSwitcher
-![Presentation](https://img.shields.io/badge/GitHub-Presentation_Mirror-blue)
-> **Note**: Development happens on [GitLab](https://gitlab.com/andrew.chuev/rswitcher). This repository is a presentation mirror.
-
 
 [![Download Latest Release](https://img.shields.io/github/v/release/andrewchuev/rswitcher?style=for-the-badge&label=Download&color=blue)](https://github.com/andrewchuev/rswitcher/releases/latest)
 

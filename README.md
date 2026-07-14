@@ -12,7 +12,8 @@ Automatically detects when text is typed in the wrong keyboard layout (EN↔RU�
 
 - **Auto-switching** — detects mismatched layout at word boundaries (Space / Enter / Tab) and on non-translatable keys using a bigram+trigram statistical language model (EN↔RU↔UA).
 - **On-the-fly detection** — mid-word switching fires as soon as 4+ characters are buffered. For longer words (8+ characters), the layout recognition threshold is dynamically relaxed to auto-switch them mid-word more reliably.
-- **Context-Aware Heuristics** — automatically disables switching when typing programming constructs (e.g., `CamelCase`, `snake_case`) in English layout, and aggressively force-switches when typing such constructs in Cyrillic by mistake.
+- **Context-Aware Heuristics** — automatically disables switching when typing programming constructs (e.g., `CamelCase`, `snake_case`) in English layout, and aggressively force-switches when typing such constructs in Cyrillic by mistake. Code-like tokens are split into their `snake_case`/`camelCase` segments and each segment is bigram-scored independently, since a whole identifier rarely matches natural-language statistics. Segments with no case/underscore cue at all (e.g. `useraccount`) get a further greedy dictionary split (`user` + `account`) before being scored as one blob.
+- **Implicit boundary flush** — a word left open when focus changes, a mouse click lands, or the Undo hotkey fires (no trailing Space/Enter ever arrives) is evaluated through the normal detector before being discarded, instead of silently dropped.
 - **Impossible Sequences Guard** — instantly penalizes physically impossible character sequences (e.g., `ьь`, `аь`) to instantly trigger a layout switch without waiting for further input.
 - **Cross-Cyrillic switching** — detects RU↔UA mismatches in addition to Cyrillic↔Latin, using UA-specific letter markers (і / ї / є / ґ) and bigram score deltas to disambiguate.
 - **Dictionary Guard** — compile-time generated sorted lists of the top common words in English (3 000), Russian (5 000), and Ukrainian (3 000) for length ≥ 4. Correctly typed common words are immune to layout switching, eliminating false-positive switches.
@@ -21,6 +22,7 @@ Automatically detects when text is typed in the wrong keyboard layout (EN↔RU�
 - **Trailing & Internal Punctuation Handling** — bigram models trim trailing punctuation before scoring. Additionally, any non-alphabetic characters found *inside* the word heavily penalize the score, preventing garbled typings (e.g., `htp.vt` for `резюме`) from outscoring purely alphabetic words.
 - **User-confirmed corrections** (`word_corrections`) — force-switching a word records its EN key sequence → target language as a permanent correction. Subsequent occurrences of that sequence are switched instantly without consulting the statistical model.
 - **Adaptive whitelisting** — words typed 3 times in a row without triggering a switch are automatically added to `ignored_words`. Counts are persisted in `adaptive_counts` across restarts so the threshold accumulates over time.
+- **Adaptive sensitivity** — 4 manual force-switches in a row nudge `sensitivity` toward more aggressive detection; a real Undo nudges it back toward more conservative detection on the spot. Bounded to the same [0.6, 1.6] range as the Low/Medium/High presets in the settings panel.
 - **Undo Feedback Whitelist** — pressing the Undo hotkey immediately after an automatic switch restores the original word and adds it to `ignored_words` so it is never switched again.
 - **Preferred Cyrillic** (`preferred_cyrillic`) — controls how ambiguous EN→Cyrillic detections are resolved: `auto` (default) requires UA-specific letters to choose Ukrainian; `ru` / `ua` always resolve ties in that direction.
 - **App Exceptions** — per-app exclusion list. Processes listed in `exceptions` (e.g. `windowsterminal.exe`) are entirely excluded from auto-switching.
@@ -175,7 +177,7 @@ main thread (Tauri v2 / WebView2 runtime)
    ```
    score = Σ ln P(cₙ | cₙ₋₁, cₙ₋₂)  /  (len - 1)
    ```
-   Tables are built at compile time from `corpus/*.txt` with Laplace (add-1) smoothing. Scoring uses fixed-size stack arrays (no heap allocation per call).
+   Tables are built at compile time from `corpus/*.txt` with interpolated Kneser-Ney smoothing (absolute discount 0.75, continuation probabilities for the held-out mass; trigrams back off to the KN-smoothed bigram distribution). Scoring uses fixed-size stack arrays (no heap allocation per call).
 
 10. **Decide** — the score delta is compared against a length-adjusted threshold divided by the `sensitivity` setting. Cross-Cyrillic (RU↔UA) candidates are additionally filtered by UA marker letters and score delta constants (`RU_UA_SCORE_MIN_DELTA`, `RU_UA_SCORE_STRONG_DELTA`). `preferred_cyrillic` breaks ties when both Cyrillic candidates are plausible.
 
@@ -248,6 +250,13 @@ Each run creates a file `%APPDATA%\rswitcher\logs\rswitcher_<unix>_<pid>.log`. E
 ```
 
 Log files older than 7 days, or when the folder exceeds the 50 MB quota, are cleaned up automatically on the next startup.
+
+Besides `[DETECT]`/`[FLY-DETECT]`/`[FORCE]`, two tags distinguish how a non-empty buffer was handled when no Space/Enter/Tab boundary ever arrived:
+
+- `[FLUSH:<source>]` (`focus-change`, `mouse-click`, `undo-hotkey`) — the buffer was evaluated through the normal detector before being cleared.
+- `[DISCARD:<source>]` (`excluded`, `navigation`, `ctrl-shortcut`, or `focus-change`/`mouse-click` while disabled) — cleared without a check, by design.
+
+`[ADAPTIVE-SENS]` logs an automatic `sensitivity` adjustment: raised after 4 manual force-switches in a row, lowered immediately after a real Undo.
 
 ---
 

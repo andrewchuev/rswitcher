@@ -1,0 +1,66 @@
+name: Release
+
+# The source code lives only in the private GitLab repo (this GitHub repo is a
+# public presentation mirror with no source tree). This workflow is dispatched
+# manually (see release.ps1) with the tag to build, clones that exact ref from
+# GitLab using a read-only deploy token, builds it here on GitHub's Windows
+# runners, and publishes the result as a GitHub Release. The checked-out
+# source only ever exists in the ephemeral runner workspace for this job.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git tag in the private GitLab repo to build (e.g. v0.1.28)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Clone private source from GitLab
+        shell: bash
+        run: |
+          git clone --branch "${{ github.event.inputs.ref }}" --depth 1 \
+            "https://oauth2:${{ secrets.GITLAB_TOKEN }}@gitlab.com/andrew.chuev/rswitcher.git" src
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src/src-tauri -> target"
+
+      - name: Install cargo-tauri CLI
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-tauri@2
+
+      - name: Build Tauri app (NSIS installer)
+        working-directory: src
+        run: cargo tauri build
+
+      - name: Package portable zip
+        shell: pwsh
+        working-directory: src
+        run: |
+          Compress-Archive -Path target/release/rswitcher.exe -DestinationPath target/release/rswitcher-portable.zip -Force
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "RSwitcher ${{ github.event.inputs.ref }}"
+          tag_name: ${{ github.event.inputs.ref }}
+          draft: false
+          prerelease: false
+          files: |
+            src/target/release/bundle/nsis/*.exe
+            src/target/release/rswitcher-portable.zip

@@ -40,9 +40,7 @@ jobs:
           workspaces: "src/src-tauri -> target"
 
       - name: Install cargo-tauri CLI
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-tauri@2
+        run: cargo install tauri-cli --version "^2.0.0" --locked
 
       - name: Build Tauri app (NSIS installer)
         working-directory: src

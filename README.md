@@ -86,8 +86,8 @@ Run `rswitcher.exe`. The application hides to the system tray on startup.
 | Double-click tray icon | Open settings window |
 | Right-click → **Settings** (Настройки / Налаштування) | Open settings window |
 | Right-click → **Exit** (Выход / Вихід) | Quit |
-| `Win+Shift` (default hotkey, customizable to any chord) | Force-convert the current word to the next layout |
-| `Win+Backspace` (default hotkey, customizable to any chord) | Undo the last conversion and whitelist the word |
+| `Ctrl+Shift+Backspace` (default hotkey, customizable to any chord) | Force-convert the current word to the next layout |
+| `Ctrl+Shift+Alt+Backspace` (default hotkey, customizable to any chord) | Undo the last conversion and whitelist the word |
 
 Hotkey virtual key codes and active modifiers (Win, Ctrl, Shift, Alt) can be changed in the settings panel or directly in `%APPDATA%\rswitcher\config.json`.
 

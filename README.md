@@ -30,6 +30,7 @@ Automatically detects when text is typed in the wrong keyboard layout (EN↔RU�
 - **Selection-Based Word Deletion** — optional setting (`use_selection_replace`) to erase the mistyped word via `Ctrl+Shift+Left` + `Backspace` instead of sequential `Backspace` keystrokes.
 - **Tabs Settings Panel** — a responsive settings window organized into **General**, **Hotkeys**, and **Exceptions** tabs.
 - **Multi-modifier hotkey chords** — both the force-switch and undo-switch hotkeys can be assigned any combination of modifier keys (`Ctrl`, `Alt`, `Shift`, `Win`) along with a triggering key, or modifier-only combinations (e.g. `Win+Shift`). Modifiers are temporarily released and restored during input simulation to avoid interference.
+- **Double-tap hotkeys** — either hotkey can instead be a quick double tap of `Shift` or `Ctrl` (two clean taps within 400 ms; a tap used in a chord, with a mouse click or held down does not count). `Alt` and `Win` are not supported.
 - **Official Tauri v2 Plugins** — native single-instance mutex handling and platform folder opening via `tauri-plugin-single-instance` and `tauri-plugin-opener`.
 - **System Diagnostics Logging** — per-launch log files with absolute local timestamps, thread labels, OS version (via registry), active keyboard layout codes. A custom panic hook writes fatal panics and backtraces to disk. The logs folder is capped at 50 MB; files older than 7 days are cleaned up on startup.
 - **Panic-safe FFI hooks** — keyboard and mouse hook callbacks are wrapped in `catch_unwind` so a Rust panic can never cross the `extern "system"` boundary; on panic the event is forwarded unchanged and typing continues uninterrupted.
@@ -89,7 +90,7 @@ Run `rswitcher.exe`. The application hides to the system tray on startup.
 | `Ctrl+Shift+Backspace` (default hotkey, customizable to any chord) | Force-convert the current word to the next layout |
 | `Ctrl+Shift+Alt+Backspace` (default hotkey, customizable to any chord) | Undo the last conversion and whitelist the word |
 
-Hotkey virtual key codes and active modifiers (Win, Ctrl, Shift, Alt) can be changed in the settings panel or directly in `%APPDATA%\rswitcher\config.json`.
+Hotkey virtual key codes and active modifiers (Win, Ctrl, Shift, Alt) can be changed in the settings panel or directly in `%APPDATA%\rswitcher\config.json`. To record a double tap, press `Shift` or `Ctrl` twice quickly in the hotkey field; it is shown as `Shift ×2` / `Ctrl ×2`.
 
 ---
 
@@ -229,7 +230,9 @@ Settings are stored in `%APPDATA%\rswitcher\config.json`:
 | `preferred_cyrillic` | `"auto"` \| `"ru"` \| `"ua"` | Tie-breaking rule for ambiguous EN→Cyrillic detections |
 | `use_selection_replace` | bool | Use `Ctrl+Shift+Left`+`Backspace` to erase instead of multiple Backspaces |
 | `hotkey_vk` | int | Virtual key code for the force-switch hotkey (default: 16 = VK_SHIFT) |
+| `hotkey_double_tap` | bool | Fire the force-switch hotkey on a double tap of `hotkey_vk` (only Shift 16 / Ctrl 17; modifier flags are then ignored). Ignored for any other key |
 | `undo_hotkey_vk` | int | Virtual key code for the undo hotkey (default: 8 = VK_BACK) |
+| `undo_hotkey_double_tap` | bool | Same as `hotkey_double_tap`, for the undo hotkey |
 
 ---
 

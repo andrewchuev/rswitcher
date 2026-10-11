@@ -52,11 +52,30 @@ jobs:
         run: |
           Compress-Archive -Path target/release/rswitcher.exe -DestinationPath target/release/rswitcher-portable.zip -Force
 
+      # The release description is this version's section of CHANGELOG.md in
+      # the cloned source (release.ps1 stamps it before tagging). Without a
+      # body GitHub falls back to the mirror's last commit message.
+      - name: Extract release notes from CHANGELOG
+        shell: bash
+        env:
+          REF: ${{ github.event.inputs.ref }}
+        run: |
+          awk -v ref="$REF" '
+            index($0, "## " ref " ") == 1 || $0 == "## " ref { found = 1; next }
+            /^## / { found = 0 }
+            found
+          ' src/CHANGELOG.md > release-notes.md || true
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            echo "No release notes were recorded for this version." > release-notes.md
+          fi
+          cat release-notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: "RSwitcher ${{ github.event.inputs.ref }}"
           tag_name: ${{ github.event.inputs.ref }}
+          body_path: release-notes.md
           draft: false
           prerelease: false
           files: |

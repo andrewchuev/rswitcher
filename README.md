@@ -37,7 +37,7 @@ You are typing, and halfway through the sentence you notice the wrong layout is 
 - **Three languages, one tool.** English, Russian and Ukrainian, including telling Russian from Ukrainian by their typical letters.
 - **Knows when to stay out of the way.** Code, identifiers, URLs, file names and technical terms are left alone, so `camelCase` and `snake_case` stay intact.
 - **Learns from you.** Force-switch a word once and it is remembered. Undo a wrong switch and that word is never touched again.
-- **Hotkeys your way.** Force a switch or undo one with any key combination — or just double-tap `Shift` or `Ctrl`.
+- **Hotkeys your way.** Force a switch or undo one with any key combination — by default a double tap of `Shift` (force) and `Ctrl` (undo).
 - **100% private.** Everything runs locally on your machine. No cloud, no telemetry, no account.
 - **Light and quiet.** Lives in the system tray, shows the current layout with a flag, and uses under 15 MB of RAM.
 - **Per-app control.** Turn auto-switching off for terminals, IDEs, games or any other program.
@@ -89,10 +89,10 @@ Detection sensitivity, hotkeys, ignored words and per-app exclusions — all in 
 |---|---|
 | Double-click the tray icon | Open settings |
 | Right-click the tray icon | Settings · Auto-switch on/off · Exit |
-| `Ctrl` + `Shift` + `Backspace` | Force-switch the current word *(default, customizable)* |
-| `Ctrl` + `Shift` + `Alt` + `Backspace` | Undo the last switch *(default, customizable)* |
+| `Shift` ×2 | Force-switch the current word *(default, customizable)* |
+| `Ctrl` ×2 | Undo the last switch *(default, customizable)* |
 
-Hotkeys are switched on in **Settings → Hotkeys**, where you can also record your own: any combination of `Ctrl`, `Alt`, `Shift`, `Win` and a key, or a quick double tap of `Shift` / `Ctrl`.
+Both hotkeys are on by default (a quick double tap of the key). In **Settings → Hotkeys** you can switch them off or record your own: any combination of `Ctrl`, `Alt`, `Shift`, `Win` and a key, or a double tap of `Shift` / `Ctrl`.
 
 ## Feedback
 

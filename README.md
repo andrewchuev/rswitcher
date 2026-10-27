@@ -38,7 +38,7 @@ You are typing, and halfway through the sentence you notice the wrong layout is 
 - **Knows when to stay out of the way.** Code, identifiers, URLs, file names and technical terms are left alone, so `camelCase` and `snake_case` stay intact.
 - **Learns from you.** Force-switch a word once and it is remembered. Undo a wrong switch and that word is never touched again.
 - **Hotkeys your way.** Force a switch or undo one with any key combination — by default a double tap of `Shift` (force) and `Ctrl` (undo).
-- **100% private.** Everything runs locally on your machine. No cloud, no telemetry, no account.
+- **100% private.** Everything you type is processed locally on your machine. No cloud, no telemetry, no account. An optional daily check for a new version on GitHub, which carries none of your data, can be turned off in the settings.
 - **Light and quiet.** Lives in the system tray, shows the current layout with a flag, and uses under 15 MB of RAM.
 - **Per-app control.** Turn auto-switching off for terminals, IDEs, games or any other program.
 

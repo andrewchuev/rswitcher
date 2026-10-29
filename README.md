@@ -9,7 +9,6 @@ Typed `ghbdtn` instead of `привет`? RSwitcher fixes it right where you typ
 
 [![Download](https://img.shields.io/github/v/release/andrewchuev/rswitcher?style=for-the-badge&label=Download&color=blue)](https://github.com/andrewchuev/rswitcher/releases/latest)
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=for-the-badge&logo=windows&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
 [Website](https://rswitcher.reslab.pro) · [Download](https://github.com/andrewchuev/rswitcher/releases/latest) · [Contact & feedback](https://rswitcher.reslab.pro/#contact)
 
@@ -101,6 +100,6 @@ Both hotkeys are on by default (a quick double tap of the key). In **Settings �
 
 Found a bug, have a question or an idea how to make RSwitcher better? Use the [contact form](https://rswitcher.reslab.pro/#contact) on the website or write to **contact@reslab.pro**. When reporting a problem, it helps to attach the latest log file from `%APPDATA%\rswitcher\logs`.
 
-## License
+---
 
-MIT. Made by [ResLab](https://reslab.pro).
+Made by [ResLab](https://reslab.pro).

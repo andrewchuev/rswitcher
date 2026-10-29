@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.svg" alt="" width="96" height="96">
+
 # RSwitcher
 
 **Stop retyping. Let your keyboard adapt.**

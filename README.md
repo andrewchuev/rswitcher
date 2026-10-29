@@ -81,6 +81,9 @@ Detection sensitivity, hotkeys, ignored words and per-app exclusions — all in 
 2. Make sure the keyboard layouts you use (English, Russian and/or Ukrainian) are added in Windows.
 3. Run RSwitcher. It hides in the system tray and starts working immediately.
 
+> [!NOTE]
+> RSwitcher is not code-signed yet, so on the first run Microsoft Defender SmartScreen may show **"Windows protected your PC"**. The warning only means that the publisher is not verified by a certificate. Click **More info**, then **Run anyway**. The installer and the portable build are built by GitHub Actions in this repository.
+
 **Requirements:** Windows 10 or 11, 64-bit.
 
 ## Everyday use

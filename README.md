@@ -41,11 +41,11 @@ You are typing, and halfway through the sentence you notice the wrong layout is 
 - **Hotkeys your way.** Force a switch or undo one with any key combination — by default a double tap of `Shift` (force) and `Ctrl` (undo).
 - **100% private.** Everything you type is processed locally on your machine. No cloud, no telemetry, no account. An optional daily check for a new version on GitHub, which carries none of your data, can be turned off in the settings.
 - **Light and quiet.** Lives in the system tray, shows the current layout with a flag, and uses under 15 MB of RAM.
-- **Per-app control.** Turn auto-switching off for terminals, IDEs, games or any other program.
+- **Per-app control.** Turn auto-switching off for games or any other program, or keep terminals and IDEs in English: switching to them turns on the English layout, and only commands typed in a Cyrillic layout by mistake are corrected.
 
 ## Make it yours
 
-Detection sensitivity, hotkeys, ignored words and per-app exclusions — all in a clean settings window with dark and light themes, available in English, Russian and Ukrainian. Changes are saved automatically.
+Detection sensitivity, hotkeys, ignored words and per-app rules — all in a clean settings window with dark and light themes, available in English, Russian and Ukrainian. Changes are saved automatically.
 
 <table>
   <tr>
@@ -62,9 +62,9 @@ Detection sensitivity, hotkeys, ignored words and per-app exclusions — all in 
   </tr>
   <tr>
     <td align="center" width="50%">
-      <img src="docs/screenshots/Screenshot_4.png" alt="App exclusions"><br>
-      <b>App exclusions</b><br>
-      Pick any running program and exclude it in one click.
+      <img src="docs/screenshots/Screenshot_4.png" alt="App rules"><br>
+      <b>App rules</b><br>
+      Pick any running program, then turn RSwitcher off there or keep it in English.
     </td>
     <td align="center" width="50%">
       <img src="docs/screenshots/Screenshot_5.png" alt="System settings"><br>
